@@ -234,6 +234,19 @@
   white-space: nowrap;
 }
 
+.month-cell button.linkish,
+button.linkish {
+  background: none;
+  border: 0;
+  color: inherit;
+  padding: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
 .chart-wrap {
   height: 260px;
   margin-top: 0.5rem;
@@ -245,6 +258,95 @@
 
 .muted {
   color: var(--text-muted);
+}
+
+.topic-form {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  padding: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.topic-form h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.topic-form label,
+.topic-form fieldset {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.topic-form legend {
+  padding: 0;
+  margin-bottom: 0.3rem;
+}
+
+.topic-form input,
+.topic-form textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem;
+}
+
+.topic-form textarea {
+  resize: vertical;
+}
+
+.topic-form input:disabled {
+  color: var(--text-muted);
+}
+
+.topic-form .hint {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.topic-form .check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.topic-form .check input {
+  width: auto;
+}
+
+.topic-form .time-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.card-head h3 {
+  margin: 0;
+}
+
+.card-head button {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.3rem 0.65rem;
+  flex-shrink: 0;
 }
 
 @media (max-width: 640px) {

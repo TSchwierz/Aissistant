@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     news_scheduler_enabled: bool = True
     news_scheduler_tick_seconds: int = 60
 
+    # Morning BLE scale listen (Pi). Inclusive start hour, exclusive end hour, local time.
+    scale_scan_enabled: bool = True
+    scale_listen_start_hour: int = 6
+    scale_listen_end_hour: int = 12
+    scale_scan_tick_seconds: int = 30
+    scale_scan_timeout_seconds: int = 12
+
     @model_validator(mode="after")
     def _merge_unprefixed_ai_keys(self) -> Settings:
         if not self.mistral_api_key:

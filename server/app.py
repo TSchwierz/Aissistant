@@ -11,6 +11,7 @@ from server.modules.calendar import router as calendar_router
 from server.modules.calendar import startup_calendar
 from server.modules.climate import mount_climate, startup_climate
 from server.modules.health import mount_health, startup_health
+from server.modules.health.scale_scan import start_scale_scanner, stop_scale_scanner
 from server.modules.news import router as news_router
 from server.modules.news import start_scheduler, startup_news, stop_scheduler
 from server.routers import backup, briefing, health as liveness
@@ -33,9 +34,11 @@ async def lifespan(_app: FastAPI):
     startup_calendar()
     startup_news()
     start_scheduler()
+    start_scale_scanner()
     try:
         yield
     finally:
+        stop_scale_scanner()
         stop_scheduler()
 
 

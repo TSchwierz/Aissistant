@@ -1,6 +1,6 @@
 # Personal AIssistent Android (Health Scale + Morning brief)
 
-Imported from Health Scale Hub. Package `com.healthscale.app`. Measure / Settings BLE sync unchanged. Morning brief is an additive entry for Android 15 Modes & Routines.
+Package `com.healthscale.app`. The phone is a read-only dashboard for the Pi: morning brief, climate, health stats, and news digests. The calendar matches the PC (month, two weeks, tags, create, edit, delete). The Pi URL is the only setting stored on the phone. The scale is read by the Pi over Bluetooth, not by this app. Morning brief remains the Modes & Routines entry.
 
 **No keystores in git.** Copy `local.properties.example` → `local.properties` (SDK path). Signing stays machine-local under `keystore/` if you create it.
 

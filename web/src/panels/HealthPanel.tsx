@@ -4,6 +4,7 @@ import { api, getApiBase, type HealthProfile, type HealthStats } from '../api'
 export function HealthPanel() {
   const [stats, setStats] = useState<HealthStats | null>(null)
   const [profile, setProfile] = useState<HealthProfile | null>(null)
+  const [scale, setScale] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -11,9 +12,18 @@ export function HealthPanel() {
     setLoading(true)
     setError(null)
     try {
-      const [s, p] = await Promise.all([api.healthStats(), api.healthProfile()])
+      const [s, p, scan] = await Promise.all([
+        api.healthStats(),
+        api.healthProfile(),
+        api.scaleStatus().catch(() => null),
+      ])
       setStats(s)
       setProfile(p)
+      setScale(
+        scan
+          ? `${scan.window} · ${scan.phase}${scan.detail ? ` — ${scan.detail}` : ''}`
+          : null,
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -31,8 +41,8 @@ export function HealthPanel() {
     <section className="panel">
       <h2>Health</h2>
       <p className="lede">
-        Scale hub stats from <code>/api/*</code>. Open the full HTML dashboard for charts and profile
-        editing.
+        The Pi records the scale over Bluetooth from 06:00 to 12:00, then stops once today&apos;s
+        measurement is stored. Profile editing stays on the HTML dashboard.
       </p>
       <div className="panel-actions">
         <button type="button" className="primary" onClick={() => void load()}>
@@ -62,6 +72,14 @@ export function HealthPanel() {
             <div className="label">Measurements</div>
             <div className="value">{stats.count}</div>
           </div>
+          {scale && (
+            <div className="stat">
+              <div className="label">Scale listener</div>
+              <div className="value" style={{ fontSize: '1.05rem' }}>
+                {scale}
+              </div>
+            </div>
+          )}
           <div className="stat">
             <div className="label">Profile</div>
             <div className="value" style={{ fontSize: '1.05rem' }}>

@@ -13,12 +13,45 @@ export function setApiBase(url: string): void {
   localStorage.setItem(STORAGE_KEY, url.trim().replace(/\/$/, ''))
 }
 
+async function readApiError(res: Response): Promise<string> {
+  const text = await res.text()
+  try {
+    const data = JSON.parse(text) as { detail?: unknown }
+    if (typeof data.detail === 'string') return data.detail
+    if (Array.isArray(data.detail)) {
+      const parts = data.detail.map((item) => {
+        if (typeof item === 'string') return item
+        if (item && typeof item === 'object' && 'msg' in item) {
+          const rec = item as { msg: unknown; loc?: unknown }
+          const loc = Array.isArray(rec.loc)
+            ? rec.loc.filter((part) => part !== 'body').join('.')
+            : ''
+          const msg = String(rec.msg)
+          return loc ? `${loc}: ${msg}` : msg
+        }
+        return JSON.stringify(item)
+      })
+      if (parts.length) return parts.join('; ')
+    }
+  } catch {
+    /* fall through to raw body */
+  }
+  return `HTTP ${res.status}: ${text.slice(0, 200)}`
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${getApiBase()}${path}`)
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
-  }
+  if (!res.ok) throw new Error(await readApiError(res))
+  return res.json() as Promise<T>
+}
+
+async function sendJson<T>(method: string, path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${getApiBase()}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await readApiError(res))
   return res.json() as Promise<T>
 }
 
@@ -74,6 +107,19 @@ export type CalendarEvent = {
   location?: string | null
   notes?: string | null
   tags: string[]
+}
+
+export type CalendarEventWrite = {
+  title: string
+  start: string
+  end?: string | null
+  all_day: boolean
+  location?: string | null
+  notes?: string | null
+  tags: string[]
+  clear_end?: boolean
+  clear_location?: boolean
+  clear_notes?: boolean
 }
 
 export type EventList = {
@@ -133,9 +179,23 @@ export type NewsTopic = {
   label: string
   goal: string
   feed_urls: string[]
+  schedule_enabled: boolean
+  schedule_hour: number
+  schedule_minute: number
+  schedule_days: number[]
   last_run_status?: string | null
   last_run_at?: string | null
   last_error?: string | null
+}
+
+export type NewsTopicWrite = {
+  label: string
+  goal: string
+  feed_urls: string[]
+  schedule_enabled: boolean
+  schedule_hour: number
+  schedule_minute: number
+  schedule_days: number[]
 }
 
 export type NewsDigest = {
@@ -174,7 +234,25 @@ export const api = {
     return getJson<EventList>(`/calendar/weeks${qs ? `?${qs}` : ''}`)
   },
   calendarTags: () => getJson<{ tags: string[] }>('/calendar/tags'),
+  createCalendarEvent: (body: CalendarEventWrite) =>
+    sendJson<CalendarEvent>('POST', '/calendar/events', body),
+  updateCalendarEvent: (id: string, body: CalendarEventWrite) =>
+    sendJson<CalendarEvent>('PUT', `/calendar/events/${encodeURIComponent(id)}`, body),
+  deleteCalendarEvent: (id: string) =>
+    sendJson<{ deleted: boolean; id: string }>(
+      'DELETE',
+      `/calendar/events/${encodeURIComponent(id)}`,
+      {},
+    ),
   healthStats: () => getJson<HealthStats>('/api/stats'),
+  scaleStatus: () =>
+    getJson<{
+      phase: string
+      detail: string
+      recorded_today: boolean
+      window: string
+      last_weight_kg?: number | null
+    }>('/api/scale'),
   healthProfile: () => getJson<HealthProfile>('/api/profile'),
   climateCurrent: () => getJson<ClimateCurrent>('/climate/current'),
   climateMeasurements: (limit = 288) =>
@@ -188,6 +266,10 @@ export const api = {
     ),
   newsTopics: () => getJson<NewsTopic[]>('/news/topics'),
   newsLatest: () => getJson<NewsDigest[]>('/news/digests/latest'),
+  createNewsTopic: (body: NewsTopicWrite & { id: string }) =>
+    sendJson<NewsTopic>('POST', '/news/topics', body),
+  updateNewsTopic: (id: string, body: NewsTopicWrite) =>
+    sendJson<NewsTopic>('PUT', `/news/topics/${encodeURIComponent(id)}`, body),
   /** Trigger browser download of SSOT zip (Phase 6 light backup). */
   downloadBackup: async (): Promise<void> => {
     const res = await fetch(`${getApiBase()}/backup/export`)
