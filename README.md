@@ -185,9 +185,25 @@ server/
 data/                 # PA_DATA_DIR (gitignored DBs)
 ```
 
+## Git remote
+
+Canonical host: **GitHub** [`TSchwierz/Aissistant`](https://github.com/TSchwierz/Aissistant).
+
+```bash
+git remote add origin https://github.com/TSchwierz/Aissistant.git   # or: git remote set-url origin …
+git push -u origin main
+git push -u origin cursor/phase0-pi-fastapi-scaffold-fed9
+```
+
 ## Opening a draft PR
 
-Branch: `cursor/phase0-pi-fastapi-scaffold-fed9`. Origin **agent_temp** remotes cannot open PRs — after a real repo exists, push this branch and open a **draft** PR to `main`.
+Branch: `cursor/phase0-pi-fastapi-scaffold-fed9` → `main` on GitHub.
+
+```bash
+gh pr create --draft --base main --head cursor/phase0-pi-fastapi-scaffold-fed9 \
+  --title "Phases 0–6: Pi SSOT + PC web + light backup" \
+  --body "…"
+```
 
 ## Out of scope (reminders)
 
