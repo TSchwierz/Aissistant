@@ -22,6 +22,10 @@ python -m server
 
 Env (`PA_` prefix): `PA_TIMEZONE` (default `Europe/Berlin`), `PA_HOST`, `PA_PORT`, `PA_DATA_DIR` (default `./data` — holds `health.db`, `climate.db`, `calendar.db`, `news.db`, `advisor/`), `PA_CLIMATE_MOCK_SENSOR` (optional bool), `PA_NEWS_SCHEDULER_ENABLED` (default true).
 
+### Morning scale (Pi Bluetooth)
+
+The Pi listens for the scale's BLE broadcast itself. The phone no longer measures. Listening runs only from **06:00–12:00** local time (`PA_SCALE_LISTEN_START_HOUR` / `PA_SCALE_LISTEN_END_HOUR`), and stops for the rest of the day once a measurement is already stored. `GET /api/scale` reports the current phase. Set `PA_SCALE_SCAN_ENABLED=false` to turn it off. The Pi needs BlueZ (`bluetooth` service) and the process user in the `bluetooth` group.
+
 ### AI keys (Pi only — never ship to clients)
 
 Provider order: **Mistral → Claude → ChatGPT → Gemini** (exponential retry per provider).
@@ -116,6 +120,8 @@ Timezone for day/month/2-week windows: `Europe/Berlin` (`PA_TIMEZONE`). No M365 
 | `GET` | `/calendar/month/{YYYY-MM}` | Month view |
 | `GET` | `/calendar/weeks` | Rolling 14-day window (`from=YYYY-MM-DD` optional) |
 | `GET` | `/calendar/tags` | Distinct free-form tags |
+
+PC web UI and the Android app can create, edit, and delete events (same fields: title, start, end, all-day, location, notes, tags).
 
 ### Health (phone-compatible; was :8000)
 

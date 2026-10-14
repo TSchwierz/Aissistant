@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from server.modules.health import services
+from server.modules.health.scale_scan import scale_status
 from server.modules.health.database import get_db, init_db
 from server.modules.health.models import Measurement  # noqa: F401 — register models
 from server.modules.health.schemas import (
@@ -78,6 +79,12 @@ def _profile_out(profile) -> ProfileOut:
 @router.get("/api/health")
 def api_health() -> dict:
     return {"status": "ok", "service": "health-scale-hub"}
+
+
+@router.get("/api/scale")
+def api_scale() -> dict:
+    """Whether the Pi is listening for the morning scale broadcast."""
+    return scale_status()
 
 
 @router.get("/api/profile", response_model=ProfileOut)
