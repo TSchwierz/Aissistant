@@ -1,6 +1,6 @@
 # Personal AIssistent
 
-Pi-oriented personal hub: **single FastAPI process** as SSOT for morning briefs, personal calendar, Health Scale Hub, and Studio Climate Monitor (news still stubbed).
+Pi-oriented personal hub: **single FastAPI process** as SSOT for morning briefs, personal calendar, news digests, Health Scale Hub, and Studio Climate Monitor.
 
 ## Ports (conflicts resolved)
 
@@ -20,7 +20,20 @@ pip install -r requirements.txt
 python -m server
 ```
 
-Env (`PA_` prefix): `PA_TIMEZONE` (default `Europe/Berlin`), `PA_HOST`, `PA_PORT`, `PA_DATA_DIR` (default `./data` — holds `health.db`, `climate.db`, `calendar.db`, `advisor/`), `PA_CLIMATE_MOCK_SENSOR` (optional bool).
+Env (`PA_` prefix): `PA_TIMEZONE` (default `Europe/Berlin`), `PA_HOST`, `PA_PORT`, `PA_DATA_DIR` (default `./data` — holds `health.db`, `climate.db`, `calendar.db`, `news.db`, `advisor/`), `PA_CLIMATE_MOCK_SENSOR` (optional bool), `PA_NEWS_SCHEDULER_ENABLED` (default true).
+
+### AI keys (Pi only — never ship to clients)
+
+Provider order: **Mistral → Claude → ChatGPT → Gemini** (exponential retry per provider).
+
+| Variable | Also accepted |
+| --- | --- |
+| `PA_MISTRAL_API_KEY` | `MISTRAL_API_KEY` |
+| `PA_ANTHROPIC_API_KEY` | `ANTHROPIC_API_KEY` |
+| `PA_OPENAI_API_KEY` | `OPENAI_API_KEY` |
+| `PA_GEMINI_API_KEY` | `GEMINI_API_KEY` / `GOOGLE_API_KEY` |
+
+With no keys configured, jobs still collect feeds and store a `skipped_summarize` digest (smoke-friendly).
 
 Optional climate overlay: copy `config.climate.example.toml` → `config.climate.toml`. Sensor defaults to **mock** for PC smoke tests.
 
@@ -31,8 +44,22 @@ Optional climate overlay: copy `config.climate.example.toml` → `config.climate
 | Method | Path |
 | --- | --- |
 | `GET` | `/health` — process liveness |
-| `GET` | `/briefing/morning` — weather (climate cache) + today’s calendar when present; news still stub |
+| `GET` | `/briefing/morning` — weather + today’s calendar + news digests when present |
 | `GET` | `/docs` |
+
+### News topics / jobs (Phase 3)
+
+Schedules use `Europe/Berlin`. Digests in `news.db`. Manual `POST …/run` for dev. Feed URLs: `https://…` RSS/Atom or `mock://name` for local smoke.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `GET` | `/news/status` | Provider order + which keys are configured |
+| `POST` | `/news/topics` | Create topic (`id`, `label`, `goal`, `feed_urls`, schedule) |
+| `GET` | `/news/topics` | List |
+| `GET`/`PUT`/`DELETE` | `/news/topics/{id}` | Read / update / delete |
+| `POST` | `/news/topics/{id}/run` | Manual collect+summarize (`?for_date=YYYY-MM-DD`) |
+| `GET` | `/news/digests` | List (`topic_id`, `date`, `limit`) |
+| `GET` | `/news/digests/latest` | One latest digest per topic for a date |
 
 ### Personal calendar (Phase 2)
 
@@ -93,7 +120,15 @@ curl -s "http://127.0.0.1:8741/calendar/day/2026-10-15"
 curl -s "http://127.0.0.1:8741/calendar/month/2026-10"
 curl -s "http://127.0.0.1:8741/calendar/weeks"
 curl -s "http://127.0.0.1:8741/calendar/events?window=2weeks&tag=health"
-curl -s "http://127.0.0.1:8741/briefing/morning?date=2026-10-15"
+
+# News
+curl -s http://127.0.0.1:8741/news/status
+curl -s -X POST http://127.0.0.1:8741/news/topics \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"politics","label":"Politics","goal":"Short English digest.","feed_urls":["mock://politics"],"schedule_hour":5,"schedule_minute":45}'
+curl -s -X POST http://127.0.0.1:8741/news/topics/politics/run
+curl -s "http://127.0.0.1:8741/news/digests/latest"
+curl -s "http://127.0.0.1:8741/briefing/morning"
 ```
 
 ## Package layout
@@ -104,6 +139,7 @@ server/
   modules/health/     # Health Scale Hub
   modules/climate/    # Studio Climate (API + sensor/weather/advisor)
   modules/calendar/   # Personal calendar SSOT
+  modules/news/       # Topics, feed collect, AI digests, scheduler
   modules/weather/    # day-overview hook → climate outdoor cache
   routers/            # /health, /briefing
 data/                 # PA_DATA_DIR (gitignored DBs)

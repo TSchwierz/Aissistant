@@ -17,6 +17,8 @@ from server.models.briefing import (
     CalendarSection,
     ClothingHint,
     MorningBriefResponse,
+    NewsSection,
+    NewsTopicDigest,
     WeatherSection,
 )
 from server.modules import calendar as calendar_mod
@@ -67,11 +69,12 @@ def get_morning_brief(
     calendar_raw = calendar_mod.get_today_events(
         date=date_iso, timezone=settings.timezone
     )
-    _ = news_mod.get_topic_digests(date=date_iso)
+    news_raw = news_mod.get_topic_digests(date=date_iso)
 
     sections_present: list[str] = []
     weather_section: WeatherSection | None = None
     calendar_section: CalendarSection | None = None
+    news_section: NewsSection | None = None
     ui_sections: list[BriefSection] = []
     freshness = BriefFreshness()
     script_parts: list[str] = []
@@ -128,6 +131,35 @@ def get_morning_brief(
                 + f", and {lines[-1]}."
             )
 
+    if news_raw:
+        by_topic = [
+            NewsTopicDigest(
+                topic_id=n["topic_id"],
+                topic_label=n["topic_label"],
+                digest=n["digest"],
+                item_count=int(n.get("item_count") or 0),
+                generated_at=n.get("generated_at"),
+                ai_provider=n.get("ai_provider"),
+            )
+            for n in news_raw
+        ]
+        news_section = NewsSection(by_topic=by_topic)
+        sections_present.append("news")
+        # Freshest digest timestamp among topics
+        gens = [n.get("generated_at") for n in news_raw if n.get("generated_at")]
+        freshness.news = max(gens) if gens else now.isoformat(timespec="seconds")
+        news_bits = [
+            f"{n['topic_label']}: {n['digest'][:280]}"
+            for n in news_raw
+            if n.get("digest")
+        ]
+        body = " | ".join(news_bits)
+        ui_sections.append(BriefSection(id="news", title="News", body=body))
+        for n in news_raw:
+            script_parts.append(
+                f"News — {n['topic_label']}: {n['digest']}"
+            )
+
     script = " ".join(script_parts)
     empty_reason = None if sections_present or script else "no_data"
 
@@ -143,6 +175,7 @@ def get_morning_brief(
         ),
         weather=weather_section,
         calendar=calendar_section,
+        news=news_section,
         script=script,
         sections=ui_sections,
     )
