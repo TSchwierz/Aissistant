@@ -39,13 +39,27 @@ Optional climate overlay: copy `config.climate.example.toml` → `config.climate
 
 ## Key routes
 
-### System / morning brief
+### System / morning brief (Phase 4)
 
 | Method | Path |
 | --- | --- |
 | `GET` | `/health` — process liveness |
-| `GET` | `/briefing/morning` — weather + today’s calendar + news digests when present |
+| `GET` | `/briefing/morning` — English radio-style `script` + `sections[]`; skip missing; `?refresh=1` busts 15‑min cache |
+| `GET` | `/briefing/morning/latest` — alias for today |
 | `GET` | `/docs` |
+
+Empty useful payload → **200** + `meta.empty_reason: "no_data"` (calm script still returned).
+
+### Android morning action
+
+See [`android/README.md`](android/README.md).
+
+| Piece | Value |
+| --- | --- |
+| Activity | `com.healthscale.app.MorningBriefActivity` |
+| Deep link | `personaissistent://morning` |
+| Flow | Fetch brief → show sections → TTS `script` → Open dashboard. **No music.** |
+| Hub URL | Settings → Pi server URL (default `:8741`) |
 
 ### News topics / jobs (Phase 3)
 

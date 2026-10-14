@@ -54,3 +54,12 @@ data/advisor/reports/
 *.db
 *.sqlite3
 config.climate.toml
+
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+android/keystore/
+android/**/*.apk
+android/**/*.aab
+android/captures/
