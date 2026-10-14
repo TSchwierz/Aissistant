@@ -63,3 +63,7 @@ android/keystore/
 android/**/*.apk
 android/**/*.aab
 android/captures/
+
+# Web
+web/node_modules/
+web/dist/

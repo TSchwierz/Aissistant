@@ -1,6 +1,6 @@
 # Personal AIssistent
 
-Pi-oriented personal hub: **single FastAPI process** as SSOT for morning briefs, personal calendar, news digests, Health Scale Hub, and Studio Climate Monitor.
+Pi-oriented personal hub: **single FastAPI process** as SSOT for morning briefs, personal calendar, news digests, Health Scale Hub, and Studio Climate Monitor — plus a LAN **PC web UI** in `web/`.
 
 ## Ports (conflicts resolved)
 
@@ -49,6 +49,14 @@ Optional climate overlay: copy `config.climate.example.toml` → `config.climate
 | `GET` | `/docs` |
 
 Empty useful payload → **200** + `meta.empty_reason: "no_data"` (calm script still returned).
+
+### PC web UI (Phase 5)
+
+```bash
+cd web && npm install && npm run dev   # http://127.0.0.1:8742
+```
+
+Tabs: morning brief, calendar (month / 2-week + tags), climate chart, health stats (+ link to `/`), news digests. Configurable Pi base URL (default `http://127.0.0.1:8741`). Details: [`web/README.md`](web/README.md).
 
 ### Android morning action
 
