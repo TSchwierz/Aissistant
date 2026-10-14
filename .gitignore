@@ -48,5 +48,9 @@ Thumbs.db
 *.local
 data/**
 !data/.gitkeep
+!data/advisor/
+!data/advisor/**/*.md
+data/advisor/reports/
 *.db
 *.sqlite3
+config.climate.toml

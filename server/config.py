@@ -26,8 +26,10 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8741
     language: str = "en"
-    # SQLite and other persistent files (health.db lives here).
+    # SQLite and other persistent files (health.db, climate.db live here).
     data_dir: str = Field(default_factory=lambda: str(_REPO_ROOT / "data"))
+    # None = follow config.toml / climate default (mock on for PC-friendly smoke).
+    climate_mock_sensor: bool | None = None
 
 
 @lru_cache
