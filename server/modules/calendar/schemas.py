@@ -1,0 +1,105 @@
+"""Pydantic models for personal calendar API."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def _clean_tags(tags: list[str] | None) -> list[str]:
+    if not tags:
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in tags:
+        tag = " ".join(str(raw).split())
+        if not tag or tag.casefold() in seen:
+            continue
+        seen.add(tag.casefold())
+        cleaned.append(tag)
+    return cleaned
+
+
+class EventCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    start: datetime
+    end: datetime | None = None
+    all_day: bool = False
+    location: str | None = Field(default=None, max_length=500)
+    notes: str | None = Field(default=None, max_length=4000)
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("title")
+    @classmethod
+    def strip_title(cls, v: str) -> str:
+        text = v.strip()
+        if not text:
+            raise ValueError("title must not be empty")
+        return text
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, v: list[str]) -> list[str]:
+        return _clean_tags(v)
+
+    @model_validator(mode="after")
+    def end_after_start(self) -> EventCreate:
+        if self.end is not None and self.end < self.start:
+            raise ValueError("end must be >= start")
+        return self
+
+
+class EventUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    start: datetime | None = None
+    end: datetime | None = None
+    clear_end: bool = False
+    all_day: bool | None = None
+    location: str | None = Field(default=None, max_length=500)
+    clear_location: bool = False
+    notes: str | None = Field(default=None, max_length=4000)
+    clear_notes: bool = False
+    tags: list[str] | None = None
+
+    @field_validator("title")
+    @classmethod
+    def strip_title(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        text = v.strip()
+        if not text:
+            raise ValueError("title must not be empty")
+        return text
+
+    @field_validator("tags")
+    @classmethod
+    def normalize_tags(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        return _clean_tags(v)
+
+
+class EventOut(BaseModel):
+    id: str
+    title: str
+    start: str
+    end: str | None = None
+    all_day: bool = False
+    location: str | None = None
+    notes: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class EventListOut(BaseModel):
+    count: int
+    timezone: str
+    range_start: str
+    range_end: str
+    events: list[EventOut]
+
+
+class TagListOut(BaseModel):
+    tags: list[str]

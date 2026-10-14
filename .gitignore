@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+env/
+.env
+.env.*
+!.env.example
+
+# IDE / tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local runtime / secrets
+*.local
+data/**
+!data/.gitkeep
+!data/advisor/
+!data/advisor/**/*.md
+data/advisor/reports/
+*.db
+*.sqlite3
+config.climate.toml
+
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+android/keystore/
+android/**/*.apk
+android/**/*.aab
+android/captures/
+
+# Web
+web/node_modules/
+web/dist/
