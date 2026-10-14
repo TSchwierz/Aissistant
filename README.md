@@ -1,6 +1,6 @@
 # Personal AIssistent
 
-Pi-oriented personal hub: **single FastAPI process** as SSOT for morning briefs, Health Scale Hub, and Studio Climate Monitor (plus stubs for calendar/news).
+Pi-oriented personal hub: **single FastAPI process** as SSOT for morning briefs, personal calendar, Health Scale Hub, and Studio Climate Monitor (news still stubbed).
 
 ## Ports (conflicts resolved)
 
@@ -20,7 +20,7 @@ pip install -r requirements.txt
 python -m server
 ```
 
-Env (`PA_` prefix): `PA_TIMEZONE` (default `Europe/Berlin`), `PA_HOST`, `PA_PORT`, `PA_DATA_DIR` (default `./data` — holds `health.db`, `climate.db`, `advisor/`), `PA_CLIMATE_MOCK_SENSOR` (optional bool).
+Env (`PA_` prefix): `PA_TIMEZONE` (default `Europe/Berlin`), `PA_HOST`, `PA_PORT`, `PA_DATA_DIR` (default `./data` — holds `health.db`, `climate.db`, `calendar.db`, `advisor/`), `PA_CLIMATE_MOCK_SENSOR` (optional bool).
 
 Optional climate overlay: copy `config.climate.example.toml` → `config.climate.toml`. Sensor defaults to **mock** for PC smoke tests.
 
@@ -31,8 +31,24 @@ Optional climate overlay: copy `config.climate.example.toml` → `config.climate
 | Method | Path |
 | --- | --- |
 | `GET` | `/health` — process liveness |
-| `GET` | `/briefing/morning` — stub brief; includes weather section when climate outdoor cache has data |
+| `GET` | `/briefing/morning` — weather (climate cache) + today’s calendar when present; news still stub |
 | `GET` | `/docs` |
+
+### Personal calendar (Phase 2)
+
+Timezone for day/month/2-week windows: `Europe/Berlin` (`PA_TIMEZONE`). No M365 import.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `POST` | `/calendar/events` | Create (`title`, `start`, `end?`, `all_day`, `location`, `notes`, `tags[]`) |
+| `GET` | `/calendar/events/{id}` | Read one |
+| `PUT` | `/calendar/events/{id}` | Update (`clear_end` / `clear_location` / `clear_notes` supported) |
+| `DELETE` | `/calendar/events/{id}` | Delete |
+| `GET` | `/calendar/events` | List — `day=YYYY-MM-DD`, `month=YYYY-MM`, `window=2weeks`, or `from`+`to`; `tag` / `exclude_tag` (repeatable) |
+| `GET` | `/calendar/day/{YYYY-MM-DD}` | Day view |
+| `GET` | `/calendar/month/{YYYY-MM}` | Month view |
+| `GET` | `/calendar/weeks` | Rolling 14-day window (`from=YYYY-MM-DD` optional) |
+| `GET` | `/calendar/tags` | Distinct free-form tags |
 
 ### Health (phone-compatible; was :8000)
 
@@ -68,7 +84,16 @@ curl -s http://127.0.0.1:8741/health
 curl -s http://127.0.0.1:8741/api/health
 curl -s http://127.0.0.1:8741/climate/health
 curl -s http://127.0.0.1:8741/climate/current
-curl -s http://127.0.0.1:8741/briefing/morning
+
+# Calendar
+curl -s -X POST http://127.0.0.1:8741/calendar/events \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Dentist","start":"2026-10-15T10:30:00+02:00","end":"2026-10-15T11:00:00+02:00","tags":["health"]}'
+curl -s "http://127.0.0.1:8741/calendar/day/2026-10-15"
+curl -s "http://127.0.0.1:8741/calendar/month/2026-10"
+curl -s "http://127.0.0.1:8741/calendar/weeks"
+curl -s "http://127.0.0.1:8741/calendar/events?window=2weeks&tag=health"
+curl -s "http://127.0.0.1:8741/briefing/morning?date=2026-10-15"
 ```
 
 ## Package layout
@@ -78,6 +103,7 @@ server/
   app.py
   modules/health/     # Health Scale Hub
   modules/climate/    # Studio Climate (API + sensor/weather/advisor)
+  modules/calendar/   # Personal calendar SSOT
   modules/weather/    # day-overview hook → climate outdoor cache
   routers/            # /health, /briefing
 data/                 # PA_DATA_DIR (gitignored DBs)

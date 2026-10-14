@@ -1,9 +1,6 @@
-"""Personal calendar SSOT (stub).
+"""Personal calendar SSOT (Pi). No M365 import in V1."""
 
-V1: personal events on the Pi. M365 work calendar is deferred.
-"""
+from server.modules.calendar.router import router
+from server.modules.calendar.service import get_today_events, startup_calendar
 
-
-def get_today_events(*, date: str, timezone: str) -> list:
-    """Return today's personal events. Stub: empty list."""
-    return []
+__all__ = ["router", "get_today_events", "startup_calendar"]

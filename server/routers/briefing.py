@@ -1,4 +1,4 @@
-"""Morning brief endpoints (Phase 0/1 stub — optional weather from climate cache)."""
+"""Morning brief endpoints — weather + calendar when available; news still stub."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from server.models.briefing import (
     BriefFreshness,
     BriefMeta,
     BriefSection,
+    CalendarEvent,
+    CalendarSection,
     ClothingHint,
     MorningBriefResponse,
     WeatherSection,
@@ -28,6 +30,19 @@ def _resolve_date(date_str: str | None, tz: ZoneInfo) -> date:
     if date_str:
         return date.fromisoformat(date_str)
     return datetime.now(tz).date()
+
+
+def _format_event_line(ev: dict, tz: ZoneInfo) -> str:
+    title = ev.get("title") or "Event"
+    if ev.get("all_day"):
+        when = "all day"
+    else:
+        try:
+            start = datetime.fromisoformat(ev["start"])
+            when = start.astimezone(tz).strftime("%H:%M")
+        except Exception:  # noqa: BLE001
+            when = ev.get("start") or ""
+    return f"{when} {title}".strip()
 
 
 @router.get("/morning")
@@ -49,11 +64,14 @@ def get_morning_brief(
     weather_raw = weather_mod.get_day_overview(
         date=date_iso, timezone=settings.timezone
     )
-    _ = calendar_mod.get_today_events(date=date_iso, timezone=settings.timezone)
+    calendar_raw = calendar_mod.get_today_events(
+        date=date_iso, timezone=settings.timezone
+    )
     _ = news_mod.get_topic_digests(date=date_iso)
 
     sections_present: list[str] = []
     weather_section: WeatherSection | None = None
+    calendar_section: CalendarSection | None = None
     ui_sections: list[BriefSection] = []
     freshness = BriefFreshness()
     script_parts: list[str] = []
@@ -78,6 +96,38 @@ def get_morning_brief(
         ui_sections.append(BriefSection(id="weather", title="Weather", body=body))
         script_parts.append(f"Weather: {body}")
 
+    if calendar_raw:
+        events = [
+            CalendarEvent(
+                id=e["id"],
+                title=e["title"],
+                start=e["start"],
+                end=e.get("end"),
+                all_day=bool(e.get("all_day")),
+                tags=list(e.get("tags") or []),
+                location=e.get("location"),
+                notes=e.get("notes"),
+            )
+            for e in calendar_raw
+        ]
+        first_start = events[0].start if events else None
+        calendar_section = CalendarSection(
+            events=events, first_event_start=first_start
+        )
+        sections_present.append("calendar")
+        freshness.calendar = now.isoformat(timespec="seconds")
+        lines = [_format_event_line(e, tz) for e in calendar_raw]
+        body = "; ".join(lines)
+        ui_sections.append(BriefSection(id="calendar", title="Today", body=body))
+        if len(lines) == 1:
+            script_parts.append(f"Today: {lines[0]}.")
+        else:
+            script_parts.append(
+                "Today you have "
+                + ", ".join(lines[:-1])
+                + f", and {lines[-1]}."
+            )
+
     script = " ".join(script_parts)
     empty_reason = None if sections_present or script else "no_data"
 
@@ -92,6 +142,7 @@ def get_morning_brief(
             empty_reason=empty_reason,
         ),
         weather=weather_section,
+        calendar=calendar_section,
         script=script,
         sections=ui_sections,
     )
