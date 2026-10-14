@@ -188,4 +188,24 @@ export const api = {
     ),
   newsTopics: () => getJson<NewsTopic[]>('/news/topics'),
   newsLatest: () => getJson<NewsDigest[]>('/news/digests/latest'),
+  /** Trigger browser download of SSOT zip (Phase 6 light backup). */
+  downloadBackup: async (): Promise<void> => {
+    const res = await fetch(`${getApiBase()}/backup/export`)
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)
+    }
+    const blob = await res.blob()
+    const cd = res.headers.get('Content-Disposition') || ''
+    const match = /filename="?([^";]+)"?/i.exec(cd)
+    const filename = match?.[1] || 'personal-aissistent-backup.zip'
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  },
 }

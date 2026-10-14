@@ -48,6 +48,24 @@ Optional climate overlay: copy `config.climate.example.toml` → `config.climate
 | `GET` | `/briefing/morning/latest` — alias for today |
 | `GET` | `/docs` |
 
+### Backup export (Phase 6 — light)
+
+Download a zip of present SSOT SQLite files under `PA_DATA_DIR` (`calendar.db`, `news.db`, plus `health.db` / `climate.db` if present), optional `advisor/*.md`, and a `manifest.json` (timestamp + timezone). Live DBs are snapshotted via SQLite `backup()` so WAL is safe.
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/backup` — JSON plan / manifest preview (no download) |
+| `GET` | `/backup/export` — zip attachment `personal-aissistent-backup-YYYYMMDD-HHMMSS.zip` |
+
+**Restore is manual / out of scope for this slice:** stop the server, extract matching `databases/*.db` (and optional `advisor/`) into `PA_DATA_DIR`, restart. No multi-device conflict resolution; no M365.
+
+```bash
+curl -s http://127.0.0.1:8741/backup | jq .
+curl -OJ http://127.0.0.1:8741/backup/export
+```
+
+PC web UI: top bar **Download backup** (same endpoint).
+
 Empty useful payload → **200** + `meta.empty_reason: "no_data"` (calm script still returned).
 
 ### PC web UI (Phase 5)
@@ -56,7 +74,7 @@ Empty useful payload → **200** + `meta.empty_reason: "no_data"` (calm script s
 cd web && npm install && npm run dev   # http://127.0.0.1:8742
 ```
 
-Tabs: morning brief, calendar (month / 2-week + tags), climate chart, health stats (+ link to `/`), news digests. Configurable Pi base URL (default `http://127.0.0.1:8741`). Details: [`web/README.md`](web/README.md).
+Tabs: morning brief, calendar (month / 2-week + tags), climate chart, health stats (+ link to `/`), news digests, plus **Download backup**. Configurable Pi base URL (default `http://127.0.0.1:8741`). Details: [`web/README.md`](web/README.md).
 
 ### Android morning action
 
@@ -163,7 +181,7 @@ server/
   modules/calendar/   # Personal calendar SSOT
   modules/news/       # Topics, feed collect, AI digests, scheduler
   modules/weather/    # day-overview hook → climate outdoor cache
-  routers/            # /health, /briefing
+  routers/            # /health, /briefing, /backup
 data/                 # PA_DATA_DIR (gitignored DBs)
 ```
 
@@ -173,6 +191,7 @@ Branch: `cursor/phase0-pi-fastapi-scaffold-fed9`. Origin **agent_temp** remotes 
 
 ## Out of scope (reminders)
 
-- Android / PC Vite apps as product shells (point clients at this API)
-- Full morning-brief LLM composition
+- Automated backup restore / multi-device sync / conflict resolution
+- M365 calendar import
+- Full morning-brief LLM composition beyond template + digests
 - Moving Advisor chat / Mistral key onto the Pi (still PC middleware in the old dashboard)

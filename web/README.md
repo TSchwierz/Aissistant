@@ -39,4 +39,6 @@ npm run preview   # also :8742
 | Health | `/api/stats`, `/api/profile` + link to HTML `/` |
 | News | `/news/status`, `/news/topics`, `/news/digests/latest` |
 
+Top bar also has **Download backup** → `GET /backup/export` (zip of SSOT DBs + manifest). Restore is manual; see root README.
+
 CORS: the Pi server allows `http://127.0.0.1:8742` (and common Vite ports). On another LAN host, either proxy through Vite or extend server CORS for that origin.

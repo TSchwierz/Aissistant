@@ -23,6 +23,8 @@ export default function App() {
   const [conn, setConn] = useState<'unknown' | 'ok' | 'err'>('unknown')
   const [connDetail, setConnDetail] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [backupMsg, setBackupMsg] = useState('')
 
   const probe = useCallback(async () => {
     try {
@@ -45,6 +47,19 @@ export default function App() {
     setReloadKey((k) => k + 1)
   }
 
+  async function downloadBackup() {
+    setBackupBusy(true)
+    setBackupMsg('')
+    try {
+      await api.downloadBackup()
+      setBackupMsg('Backup zip downloaded. Restore is manual — see Pi README.')
+    } catch (e) {
+      setBackupMsg(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -65,14 +80,23 @@ export default function App() {
           <button type="button" onClick={() => void probe()}>
             Test
           </button>
+          <button
+            type="button"
+            disabled={backupBusy}
+            onClick={() => void downloadBackup()}
+            title="Download SSOT databases as a zip (restore is manual)"
+          >
+            {backupBusy ? 'Backing up…' : 'Download backup'}
+          </button>
           <span className={`status-pill ${conn === 'ok' ? 'ok' : conn === 'err' ? 'err' : ''}`}>
             {conn === 'unknown' ? '…' : conn === 'ok' ? 'connected' : 'offline'}
           </span>
         </div>
       </header>
-      {connDetail && (
+      {(connDetail || backupMsg) && (
         <p className="muted" style={{ marginTop: '-0.5rem', marginBottom: '0.85rem' }}>
           {connDetail}
+          {backupMsg ? `${connDetail ? ' · ' : ''}${backupMsg}` : ''}
         </p>
       )}
 

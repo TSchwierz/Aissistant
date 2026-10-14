@@ -13,7 +13,7 @@ from server.modules.climate import mount_climate, startup_climate
 from server.modules.health import mount_health, startup_health
 from server.modules.news import router as news_router
 from server.modules.news import start_scheduler, startup_news, stop_scheduler
-from server.routers import briefing, health as liveness
+from server.routers import backup, briefing, health as liveness
 
 # LAN PC web UI (Vite) origins — not for public internet.
 _LAN_WEB_ORIGINS = [
@@ -46,7 +46,7 @@ def create_app() -> FastAPI:
         version=__version__,
         description=(
             "Pi SSOT for Personal AIssistent "
-            "(Health + Studio Climate + calendar + news + morning brief). "
+            "(Health + Studio Climate + calendar + news + morning brief + backup). "
             "Trusted home LAN only — auth TBD; do not expose publicly. "
             "Former Health :8000 and Climate :8787 → this process :8741 "
             "(climate routes under /climate). AI keys on Pi only."
@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(briefing.router)
     app.include_router(calendar_router)
     app.include_router(news_router)
+    app.include_router(backup.router)
     mount_health(app)
     mount_climate(app)
     return app
