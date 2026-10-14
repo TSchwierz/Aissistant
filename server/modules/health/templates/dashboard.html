@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Health Scale Hub</title>
+  <link rel="stylesheet" href="/static/styles.css?v=2" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Health Scale Hub</h1>
+      <p class="tagline">Home LAN body metrics</p>
+    </div>
+    <nav class="range-nav" aria-label="Chart range">
+      <button type="button" class="range-btn" data-range="7">7d</button>
+      <button type="button" class="range-btn active" data-range="30">30d</button>
+      <button type="button" class="range-btn" data-range="90">90d</button>
+      <button type="button" class="range-btn" data-range="all">All</button>
+    </nav>
+  </header>
+
+  {% if not profile_complete %}
+  <div class="banner warn" id="profile-banner">
+    Profile incomplete — set height, age, and sex below so body composition can be calculated from impedance.
+  </div>
+  {% endif %}
+
+  <main class="layout">
+    <section class="panel profile-panel">
+      <h2>Profile</h2>
+      <form id="profile-form" class="profile-form">
+        <label>Name
+          <input name="name" type="text" value="{{ profile.name or '' }}" autocomplete="name" />
+        </label>
+        <label>Height (cm)
+          <input name="height_cm" type="number" step="0.1" min="1" max="300"
+                 value="{{ profile.height_cm if profile.height_cm is not none else '' }}" />
+        </label>
+        <label>Age
+          <input name="age" type="number" min="1" max="120"
+                 value="{{ profile.age if profile.age is not none else '' }}" />
+        </label>
+        <label>Sex
+          <select name="sex">
+            <option value="" {% if not profile.sex %}selected{% endif %}>—</option>
+            <option value="male" {% if profile.sex == 'male' %}selected{% endif %}>Male</option>
+            <option value="female" {% if profile.sex == 'female' %}selected{% endif %}>Female</option>
+          </select>
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="primary">Save profile</button>
+          <button type="button" id="recalc-btn" class="secondary">Recalculate metrics</button>
+        </div>
+        <p id="profile-status" class="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section class="panel summary-panel">
+      <h2>Latest</h2>
+      <div class="cards" id="summary-cards">
+        <div class="card"><span class="label">Weight</span><span class="value" id="s-weight">—</span></div>
+        <div class="card"><span class="label">BMI</span><span class="value" id="s-bmi">—</span></div>
+        <div class="card"><span class="label">Body fat</span><span class="value" id="s-fat">—</span></div>
+        <div class="card"><span class="label">Muscle</span><span class="value" id="s-muscle">—</span></div>
+        <div class="card"><span class="label">Water</span><span class="value" id="s-water">—</span></div>
+        <div class="card"><span class="label">BMR</span><span class="value" id="s-bmr">—</span></div>
+        <div class="card"><span class="label">Measured</span><span class="value small" id="s-when">—</span></div>
+        <div class="card"><span class="label">7d Δ</span><span class="value" id="s-delta">—</span></div>
+      </div>
+    </section>
+
+    <section class="panel charts-panel">
+      <h2>Charts</h2>
+      <div class="chart-grid">
+        <div class="chart-box">
+          <h3>Weight (kg)</h3>
+          <canvas id="chart-weight"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Body fat %</h3>
+          <canvas id="chart-fat"></canvas>
+        </div>
+        <div class="chart-box">
+          <h3>Muscle (kg) &amp; Water %</h3>
+          <canvas id="chart-comp"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="table-head">
+        <h2>Measurements</h2>
+        <a class="secondary link-btn" id="export-link" href="/api/measurements/export.csv">Export CSV</a>
+      </div>
+      <div class="table-wrap">
+        <table id="meas-table">
+          <thead>
+            <tr>
+              <th class="col-actions">Actions</th>
+              <th>When</th>
+              <th>Weight</th>
+              <th>Impedance</th>
+              <th>BMI</th>
+              <th>Fat %</th>
+              <th>Muscle</th>
+              <th>Water %</th>
+              <th>Bone</th>
+              <th>Visceral</th>
+              <th>BMR</th>
+              <th>Body age</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="edit-dialog" class="edit-dialog">
+    <form id="edit-form" method="dialog" class="edit-form">
+      <h2>Edit measurement</h2>
+      <input type="hidden" name="id" id="edit-id" />
+      <label>When
+        <input name="measured_at" id="edit-measured-at" type="datetime-local" required />
+      </label>
+      <label>Weight (kg)
+        <input name="weight_kg" id="edit-weight" type="number" step="0.01" min="0.1" max="499" required />
+      </label>
+      <label>Impedance (ohm)
+        <input name="impedance_ohm" id="edit-impedance" type="number" step="0.1" min="0" />
+      </label>
+      <p id="edit-status" class="status" aria-live="polite"></p>
+      <div class="edit-actions">
+        <button type="button" class="secondary" id="edit-cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/dashboard.js?v=2"></script>
+</body>
+</html>

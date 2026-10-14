@@ -46,6 +46,7 @@ Thumbs.db
 
 # Local runtime / secrets
 *.local
-data/
+data/**
+!data/.gitkeep
 *.db
 *.sqlite3
