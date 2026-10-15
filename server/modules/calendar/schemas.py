@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+_REPEAT = {"weekly", "biweekly"}
 
 
 def _clean_tags(tags: list[str] | None) -> list[str]:
@@ -29,6 +31,8 @@ class EventCreate(BaseModel):
     location: str | None = Field(default=None, max_length=500)
     notes: str | None = Field(default=None, max_length=4000)
     tags: list[str] = Field(default_factory=list)
+    repeat: str | None = None
+    repeat_until: date | None = None
 
     @field_validator("title")
     @classmethod
@@ -43,10 +47,23 @@ class EventCreate(BaseModel):
     def normalize_tags(cls, v: list[str]) -> list[str]:
         return _clean_tags(v)
 
+    @field_validator("repeat")
+    @classmethod
+    def check_repeat(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        if v not in _REPEAT:
+            raise ValueError("repeat must be weekly or biweekly")
+        return v
+
     @model_validator(mode="after")
     def end_after_start(self) -> EventCreate:
         if self.end is not None and self.end < self.start:
             raise ValueError("end must be >= start")
+        if self.repeat_until is not None and self.repeat_until < self.start.date():
+            raise ValueError("repeat_until must be on or after the start date")
+        if self.repeat_until is not None and self.repeat is None:
+            raise ValueError("repeat_until requires repeat")
         return self
 
 
@@ -61,6 +78,10 @@ class EventUpdate(BaseModel):
     notes: str | None = Field(default=None, max_length=4000)
     clear_notes: bool = False
     tags: list[str] | None = None
+    repeat: str | None = None
+    clear_repeat: bool = False
+    repeat_until: date | None = None
+    clear_repeat_until: bool = False
 
     @field_validator("title")
     @classmethod
@@ -79,6 +100,15 @@ class EventUpdate(BaseModel):
             return None
         return _clean_tags(v)
 
+    @field_validator("repeat")
+    @classmethod
+    def check_repeat(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        if v not in _REPEAT:
+            raise ValueError("repeat must be weekly or biweekly")
+        return v
+
 
 class EventOut(BaseModel):
     id: str
@@ -91,6 +121,11 @@ class EventOut(BaseModel):
     tags: list[str] = Field(default_factory=list)
     created_at: str | None = None
     updated_at: str | None = None
+    series_id: str | None = None
+    series_start: str | None = None
+    series_end: str | None = None
+    repeat: str | None = None
+    repeat_until: str | None = None
 
 
 class EventListOut(BaseModel):

@@ -10,6 +10,7 @@ from server.config import get_settings
 from server.modules.calendar import router as calendar_router
 from server.modules.calendar import startup_calendar
 from server.modules.climate import mount_climate, startup_climate
+from server.modules.climate.collector import start_collector, stop_collector
 from server.modules.health import mount_health, startup_health
 from server.modules.health.scale_scan import start_scale_scanner, stop_scale_scanner
 from server.modules.news import router as news_router
@@ -33,11 +34,14 @@ async def lifespan(_app: FastAPI):
     startup_climate()
     startup_calendar()
     startup_news()
-    start_scheduler()
-    start_scale_scanner()
+    if get_settings().embed_workers:
+        start_scheduler()
+        start_scale_scanner()
+        start_collector()
     try:
         yield
     finally:
+        stop_collector()
         stop_scale_scanner()
         stop_scheduler()
 

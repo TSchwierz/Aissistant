@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   addDays,
+  addMonths,
   eachDayOfInterval,
   endOfMonth,
   endOfWeek,
@@ -10,7 +11,7 @@ import {
 } from 'date-fns'
 import { api, type CalendarEvent, type CalendarEventWrite, type EventList } from '../api'
 
-type ViewMode = 'month' | 'weeks'
+type ViewMode = 'month' | 'week' | 'fortnight' | 'simple'
 type EditorMode = 'create' | 'edit'
 
 type Draft = {
@@ -22,6 +23,8 @@ type Draft = {
   location: string
   notes: string
   tags: string
+  repeat: '' | 'weekly' | 'biweekly'
+  repeatUntil: string
 }
 
 function eventDayKey(ev: CalendarEvent): string {
@@ -47,20 +50,69 @@ function emptyDraft(): Draft {
     location: '',
     notes: '',
     tags: '',
+    repeat: '',
+    repeatUntil: '',
   }
 }
 
 function draftFromEvent(event: CalendarEvent): Draft {
+  const anchorStart = event.series_start || event.start
+  const anchorEnd = event.repeat ? event.series_end : event.end
   return {
-    id: event.id,
+    id: event.series_id || event.id.split('~')[0],
     title: event.title,
     allDay: event.all_day,
-    start: event.all_day ? event.start.slice(0, 10) : toLocalInput(event.start),
-    end: event.all_day ? (event.end ? event.end.slice(0, 10) : '') : toLocalInput(event.end),
+    start: event.all_day ? anchorStart.slice(0, 10) : toLocalInput(anchorStart),
+    end: event.all_day
+      ? anchorEnd
+        ? anchorEnd.slice(0, 10)
+        : ''
+      : toLocalInput(anchorEnd),
     location: event.location ?? '',
     notes: event.notes ?? '',
     tags: event.tags.join(', '),
+    repeat: event.repeat === 'weekly' || event.repeat === 'biweekly' ? event.repeat : '',
+    repeatUntil: event.repeat_until ?? '',
   }
+}
+
+function eventClock(ev: CalendarEvent): string {
+  if (ev.all_day) return ''
+  const match = /T(\d{2}:\d{2})/.exec(ev.start)
+  return match ? match[1] : ''
+}
+
+function eventLabel(ev: CalendarEvent): string {
+  const clock = eventClock(ev)
+  return clock ? `${clock} ${ev.title}` : ev.title
+}
+
+function wallMinutes(iso: string): number {
+  const match = /T(\d{2}):(\d{2})/.exec(iso)
+  if (!match) return 0
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
+function isUpcoming(ev: CalendarEvent, now = Date.now()): boolean {
+  const end = ev.end || ev.start
+  const parsed = Date.parse(end)
+  return Number.isNaN(parsed) ? true : parsed >= now
+}
+
+const HOUR_PX = 42
+
+function daySegment(ev: CalendarEvent, dayKey: string): { startMin: number; endMin: number } | null {
+  if (ev.all_day) return null
+  const startDay = eventDayKey(ev)
+  const endDay = (ev.end || ev.start).slice(0, 10)
+  const startMin = wallMinutes(ev.start)
+  let endMin = ev.end ? wallMinutes(ev.end) : startMin + 60
+  if (endDay === startDay && endMin <= startMin) endMin = startMin + 60
+  if (dayKey === startDay && dayKey === endDay) return { startMin, endMin }
+  if (dayKey === startDay && endDay > startDay) return { startMin, endMin: 24 * 60 }
+  if (dayKey > startDay && dayKey < endDay) return { startMin: 0, endMin: 24 * 60 }
+  if (dayKey === endDay && endDay > startDay) return { startMin: 0, endMin: Math.max(endMin, 15) }
+  return null
 }
 
 function parseTags(text: string): string[] {
@@ -99,11 +151,16 @@ function toWrite(draft: Draft, mode: EditorMode): CalendarEventWrite {
     clear_end: mode === 'edit' && !end,
     clear_location: mode === 'edit' && !location,
     clear_notes: mode === 'edit' && !notes,
+    repeat: draft.repeat || null,
+    repeat_until: draft.repeat ? draft.repeatUntil || null : null,
+    clear_repeat: mode === 'edit' && !draft.repeat,
+    clear_repeat_until: mode === 'edit' && !draft.repeatUntil,
   }
 }
 
 export function CalendarPanel() {
-  const [mode, setMode] = useState<ViewMode>('weeks')
+  const [mode, setMode] = useState<ViewMode>('fortnight')
+  const [upcomingOnly, setUpcomingOnly] = useState(false)
   const [tag, setTag] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [list, setList] = useState<EventList | null>(null)
@@ -123,11 +180,16 @@ export function CalendarPanel() {
     setError(null)
     try {
       const tagArg = tag || undefined
+      const span = mode === 'week' ? 7 : 14
+      const fromDate =
+        mode === 'week' || mode === 'fortnight'
+          ? startOfWeek(cursor, { weekStartsOn: 1 })
+          : cursor
       const [tagList, events] = await Promise.all([
         api.calendarTags(),
         mode === 'month'
           ? api.calendarMonth(monthKey, tagArg)
-          : api.calendarWeeks(format(cursor, 'yyyy-MM-dd'), tagArg),
+          : api.calendarWeeks(format(fromDate, 'yyyy-MM-dd'), tagArg, span),
       ])
       setTags(tagList.tags)
       setList(events)
@@ -159,10 +221,36 @@ export function CalendarPanel() {
     return eachDayOfInterval({ start, end })
   }, [cursor])
 
+  const rasterDays = useMemo(() => {
+    const start = startOfWeek(cursor, { weekStartsOn: 1 })
+    const count = mode === 'week' ? 6 : 13
+    return eachDayOfInterval({ start, end: addDays(start, count) })
+  }, [cursor, mode])
+
+  const visibleEvents = useMemo(() => {
+    const events = list?.events ?? []
+    if (mode === 'simple' && upcomingOnly) return events.filter((ev) => isUpcoming(ev))
+    return events
+  }, [list, mode, upcomingOnly])
+
   function openCreate() {
     setEditor('create')
     setDraft(emptyDraft())
     setFormError(null)
+  }
+
+  function openCreateAt(day: Date, hour: number) {
+    const start = new Date(day)
+    start.setHours(hour, 0, 0, 0)
+    setEditor('create')
+    setDraft({ ...emptyDraft(), start: format(start, "yyyy-MM-dd'T'HH:mm") })
+    setFormError(null)
+  }
+
+  function shift(direction: number) {
+    if (mode === 'month') setCursor(addMonths(cursor, direction))
+    else if (mode === 'week') setCursor(addDays(cursor, direction * 7))
+    else setCursor(addDays(cursor, direction * 14))
   }
 
   function openEdit(event: CalendarEvent) {
@@ -213,10 +301,24 @@ export function CalendarPanel() {
         </button>
         <button
           type="button"
-          className={mode === 'weeks' ? 'primary' : undefined}
-          onClick={() => setMode('weeks')}
+          className={mode === 'week' ? 'primary' : undefined}
+          onClick={() => setMode('week')}
+        >
+          Week
+        </button>
+        <button
+          type="button"
+          className={mode === 'fortnight' ? 'primary' : undefined}
+          onClick={() => setMode('fortnight')}
         >
           2 weeks
+        </button>
+        <button
+          type="button"
+          className={mode === 'simple' ? 'primary' : undefined}
+          onClick={() => setMode('simple')}
+        >
+          Simplified
         </button>
         <button
           type="button"
@@ -225,13 +327,23 @@ export function CalendarPanel() {
         >
           Month
         </button>
-        <button type="button" onClick={() => setCursor(addDays(cursor, mode === 'month' ? -30 : -14))}>
+        {mode === 'simple' && (
+          <label className="check" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <input
+              type="checkbox"
+              checked={upcomingOnly}
+              onChange={(event) => setUpcomingOnly(event.target.checked)}
+            />
+            Only upcoming
+          </label>
+        )}
+        <button type="button" onClick={() => shift(-1)}>
           ←
         </button>
         <button type="button" onClick={() => setCursor(new Date())}>
           Today
         </button>
-        <button type="button" onClick={() => setCursor(addDays(cursor, mode === 'month' ? 30 : 14))}>
+        <button type="button" onClick={() => shift(1)}>
           →
         </button>
         <button type="button" onClick={() => void load()}>
@@ -283,6 +395,33 @@ export function CalendarPanel() {
             />
             All day
           </label>
+          <div className="time-row">
+            <label>
+              Repeat
+              <select
+                value={draft.repeat}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    repeat: event.target.value as Draft['repeat'],
+                  })
+                }
+              >
+                <option value="">Does not repeat</option>
+                <option value="weekly">Every week</option>
+                <option value="biweekly">Every two weeks</option>
+              </select>
+            </label>
+            <label>
+              Repeat until
+              <input
+                type="date"
+                value={draft.repeatUntil}
+                disabled={!draft.repeat}
+                onChange={(event) => setDraft({ ...draft, repeatUntil: event.target.value })}
+              />
+            </label>
+          </div>
           <div className="time-row">
             <label>
               Start
@@ -380,14 +519,26 @@ export function CalendarPanel() {
               {monthCells.map((day) => {
                 const key = format(day, 'yyyy-MM-dd')
                 const events = byDay.get(key) ?? []
+                const inMonth = day.getMonth() === cursor.getMonth()
                 return (
-                  <div className="month-cell" key={key}>
+                  <div
+                    className={`month-cell ${inMonth ? '' : 'outside'}`}
+                    key={key}
+                    onClick={() => openCreateAt(day, 9)}
+                  >
                     <div className="daynum">{format(day, 'd')}</div>
                     <ul>
-                      {events.slice(0, 3).map((ev) => (
+                      {events.slice(0, 4).map((ev) => (
                         <li key={ev.id}>
-                          <button type="button" className="linkish" onClick={() => openEdit(ev)}>
-                            {ev.title}
+                          <button
+                            type="button"
+                            className="linkish"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              openEdit(ev)
+                            }}
+                          >
+                            {eventLabel(ev)}
                           </button>
                         </li>
                       ))}
@@ -396,17 +547,103 @@ export function CalendarPanel() {
                 )
               })}
             </div>
+          ) : mode === 'week' || mode === 'fortnight' ? (
+            <div className="raster">
+              <div
+                className="raster-head"
+                style={{ gridTemplateColumns: `52px repeat(${rasterDays.length}, minmax(0, 1fr))` }}
+              >
+                <div />
+                {rasterDays.map((day) => (
+                  <div key={format(day, 'yyyy-MM-dd')} className={format(day, 'yyyy-MM-dd') === todayKey ? 'today' : undefined}>
+                    {format(day, 'EEE d')}
+                  </div>
+                ))}
+              </div>
+              <div
+                className="raster-allday"
+                style={{ gridTemplateColumns: `52px repeat(${rasterDays.length}, minmax(0, 1fr))` }}
+              >
+                <div className="raster-label">all day</div>
+                {rasterDays.map((day) => {
+                  const key = format(day, 'yyyy-MM-dd')
+                  const events = (byDay.get(key) ?? []).filter((ev) => ev.all_day)
+                  return (
+                    <div key={key}>
+                      {events.map((ev) => (
+                        <button key={ev.id} type="button" className="raster-event static" onClick={() => openEdit(ev)}>
+                          {ev.title}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="raster-scroll">
+                <div
+                  className="raster-body"
+                  style={{ gridTemplateColumns: `52px repeat(${rasterDays.length}, minmax(0, 1fr))` }}
+                >
+                  <div>
+                    {Array.from({ length: 24 }, (_, hour) => (
+                      <div key={hour} className="raster-label" style={{ height: HOUR_PX }}>
+                        {String(hour).padStart(2, '0')}:00
+                      </div>
+                    ))}
+                  </div>
+                  {rasterDays.map((day) => {
+                    const key = format(day, 'yyyy-MM-dd')
+                    const events = (byDay.get(key) ?? []).filter((ev) => !ev.all_day)
+                    return (
+                      <div className="raster-col" key={key}>
+                        {Array.from({ length: 24 }, (_, hour) => (
+                          <button
+                            key={hour}
+                            type="button"
+                            className="raster-slot"
+                            style={{ height: HOUR_PX }}
+                            aria-label={`New event ${key} ${hour}:00`}
+                            onClick={() => openCreateAt(day, hour)}
+                          />
+                        ))}
+                        {events.map((ev) => {
+                          const segment = daySegment(ev, key)
+                          if (!segment) return null
+                          const top = (segment.startMin / (24 * 60)) * 24 * HOUR_PX
+                          const height = Math.max(
+                            18,
+                            ((segment.endMin - segment.startMin) / (24 * 60)) * 24 * HOUR_PX,
+                          )
+                          return (
+                            <button
+                              key={ev.id}
+                              type="button"
+                              className="raster-event"
+                              style={{ top, height }}
+                              onClick={() => openEdit(ev)}
+                            >
+                              {eventLabel(ev)}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
           ) : (
             <>
-              {(list.events.length === 0 && <div className="list-empty">No events in this window.</div>) ||
+              {(visibleEvents.length === 0 && <div className="list-empty">No events in this window.</div>) ||
                 null}
-              {list.events.map((ev) => (
+              {visibleEvents.map((ev) => (
                 <div className="event-row" key={ev.id}>
                   <div className="card-head">
                     <div>
                       <div className="when">
                         {ev.all_day ? `${eventDayKey(ev)} · all day` : ev.start}
                         {eventDayKey(ev) === todayKey ? ' · today' : ''}
+                        {ev.repeat ? ` · ${ev.repeat === 'biweekly' ? 'every 2 weeks' : 'weekly'}` : ''}
                       </div>
                       <strong>{ev.title}</strong>
                     </div>

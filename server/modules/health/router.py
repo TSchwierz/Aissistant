@@ -12,12 +12,13 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from server.modules.health import services
-from server.modules.health.scale_scan import scale_status
 from server.modules.health.database import get_db, init_db
 from server.modules.health.models import Measurement  # noqa: F401 — register models
+from server.modules.health.scale_scan import scale_status, set_scale_mode
 from server.modules.health.schemas import (
     IngestResult,
     MeasurementBatchIn,
@@ -81,9 +82,21 @@ def api_health() -> dict:
     return {"status": "ok", "service": "health-scale-hub"}
 
 
+class ScaleModeIn(BaseModel):
+    action: str = Field(pattern="^(start|stop|auto)$")
+
+
 @router.get("/api/scale")
 def api_scale() -> dict:
     """Whether the Pi is listening for the morning scale broadcast."""
+    return scale_status()
+
+
+@router.post("/api/scale/mode")
+def post_scale_mode(body: ScaleModeIn) -> dict:
+    """Manual test control. ``start`` scans now, ``stop`` stays quiet, ``auto`` uses 06:00–12:00."""
+    mode = {"start": "on", "stop": "off", "auto": "auto"}[body.action]
+    set_scale_mode(mode)
     return scale_status()
 
 

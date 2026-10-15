@@ -107,6 +107,11 @@ export type CalendarEvent = {
   location?: string | null
   notes?: string | null
   tags: string[]
+  series_id?: string | null
+  series_start?: string | null
+  series_end?: string | null
+  repeat?: 'weekly' | 'biweekly' | null
+  repeat_until?: string | null
 }
 
 export type CalendarEventWrite = {
@@ -120,6 +125,10 @@ export type CalendarEventWrite = {
   clear_end?: boolean
   clear_location?: boolean
   clear_notes?: boolean
+  repeat?: 'weekly' | 'biweekly' | null
+  repeat_until?: string | null
+  clear_repeat?: boolean
+  clear_repeat_until?: boolean
 }
 
 export type EventList = {
@@ -174,6 +183,38 @@ export type ClimateMeasurement = {
   humidity_pct: number
 }
 
+export type ClimateProviderReport = {
+  name: string
+  ok: boolean
+  error?: string | null
+  temperature_c?: number | null
+  humidity_pct?: number | null
+  condition?: string | null
+  updated_at?: string | null
+}
+
+export type ClimateOutside = {
+  providers?: string[]
+  provider_reports?: ClimateProviderReport[]
+  reading?: {
+    temperature_c?: number
+    humidity_pct?: number
+    condition?: string
+    sources?: string[]
+  } | null
+  comparison?: {
+    ventilation?: { action?: string; reason?: string; delta_c?: number | null }
+  }
+}
+
+export type ClimateSettings = {
+  humidity_min: number
+  humidity_max: number
+  temp_min: number
+  temp_max: number
+  sample_interval_seconds: number
+}
+
 export type NewsTopic = {
   id: string
   label: string
@@ -226,10 +267,11 @@ export const api = {
     const qs = q.toString()
     return getJson<EventList>(`/calendar/month/${month}${qs ? `?${qs}` : ''}`)
   },
-  calendarWeeks: (from?: string, tag?: string) => {
+  calendarWeeks: (from?: string, tag?: string, days = 14) => {
     const q = new URLSearchParams()
     if (from) q.set('from', from)
     if (tag) q.set('tag', tag)
+    q.set('days', String(days))
     const qs = q.toString()
     return getJson<EventList>(`/calendar/weeks${qs ? `?${qs}` : ''}`)
   },
@@ -251,15 +293,25 @@ export const api = {
       detail: string
       recorded_today: boolean
       window: string
+      mode?: string
       last_weight_kg?: number | null
     }>('/api/scale'),
+  setScaleMode: (action: 'start' | 'stop' | 'auto') =>
+    sendJson<{ phase: string; detail: string; mode?: string }>('POST', '/api/scale/mode', {
+      action,
+    }),
   healthProfile: () => getJson<HealthProfile>('/api/profile'),
   climateCurrent: () => getJson<ClimateCurrent>('/climate/current'),
   climateMeasurements: (limit = 288) =>
     getJson<{ count: number; measurements: ClimateMeasurement[] }>(
       `/climate/measurements?limit=${limit}`,
     ),
-  climateOutside: () => getJson<Record<string, unknown>>('/climate/outside'),
+  climateOutside: () => getJson<ClimateOutside>('/climate/outside'),
+  climateSettings: () => getJson<ClimateSettings>('/climate/settings'),
+  updateClimateSettings: (body: Partial<ClimateSettings>) =>
+    sendJson<ClimateSettings>('PUT', '/climate/settings', body),
+  refreshClimateOutside: () => sendJson<ClimateOutside>('POST', '/climate/outside/refresh', {}),
+  climateStrategies: () => getJson<{ markdown: string }>('/climate/advisor/strategies'),
   newsStatus: () =>
     getJson<{ providers_order: string[]; providers_configured: string[]; topics: number }>(
       '/news/status',

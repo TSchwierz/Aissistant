@@ -691,12 +691,15 @@ class WeatherService:
                 reading.condition or "unknown",
                 ", ".join(ok),
             )
+        reports = [_provider_report(snapshot) for snapshot in snapshots]
+        try:
+            self.db.save_provider_reports(reports)
+        except Exception:  # noqa: BLE001 — status table must not fail the poll
+            logger.exception("Could not store provider reports")
         return WeatherSnapshot(
             reading=reading,
             forecast=forecast,
-            providers=[
-                {"name": s.name, "ok": s.ok, "error": s.error} for s in snapshots
-            ],
+            providers=reports,
         )
 
     def reading_for_alert(self) -> OutsideReading | None:
@@ -718,6 +721,20 @@ class WeatherService:
 
 # Below this the two dew points are too close to call, given sensor accuracy.
 DEW_POINT_MARGIN_C = 1.0
+
+
+def _provider_report(snapshot: ProviderSnapshot) -> dict[str, Any]:
+    current = snapshot.current
+    return {
+        "name": snapshot.name,
+        "ok": snapshot.ok,
+        "error": snapshot.error,
+        "temperature_c": None if current is None else current.temperature_c,
+        "humidity_pct": None if current is None else current.humidity_pct,
+        "dew_point_c": None if current is None else current.dew_point_c,
+        "condition": None if current is None else current.condition,
+        "wind_kph": None if current is None else current.wind_kph,
+    }
 
 
 def ventilation_advice(

@@ -45,6 +45,9 @@ class Settings(BaseSettings):
 
     news_scheduler_enabled: bool = True
     news_scheduler_tick_seconds: int = 60
+    # True: background workers run as threads inside the API process (local dev).
+    # False: a supervisor runs each worker as its own process. See start-server.sh.
+    embed_workers: bool = True
 
     # Morning BLE scale listen (Pi). Inclusive start hour, exclusive end hour, local time.
     scale_scan_enabled: bool = True

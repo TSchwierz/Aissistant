@@ -100,6 +100,7 @@ export function NewsPanel() {
   const [draft, setDraft] = useState<Draft>(emptyDraft)
   const [formError, setFormError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [section, setSection] = useState<'topics' | 'digests'>('topics')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -304,6 +305,24 @@ export function NewsPanel() {
       {error && <div className="error-box">{error}</div>}
       {!loading && (
         <>
+          <div className="subnav" role="tablist" aria-label="News sections">
+            <button
+              type="button"
+              className={section === 'topics' ? 'active' : undefined}
+              onClick={() => setSection('topics')}
+            >
+              Topics ({topics.length})
+            </button>
+            <button
+              type="button"
+              className={section === 'digests' ? 'active' : undefined}
+              onClick={() => setSection('digests')}
+            >
+              Latest digests ({digests.length})
+            </button>
+          </div>
+          {section === 'topics' && (
+            <>
           <h3 className="muted" style={{ fontSize: '0.85rem' }}>
             Topics ({topics.length})
           </h3>
@@ -332,6 +351,10 @@ export function NewsPanel() {
               </p>
             </div>
           ))}
+            </>
+          )}
+          {section === 'digests' && (
+            <>
           <h3 className="muted" style={{ fontSize: '0.85rem', marginTop: '1rem' }}>
             Latest digests
           </h3>
@@ -351,6 +374,8 @@ export function NewsPanel() {
               </p>
             </div>
           ))}
+            </>
+          )}
         </>
       )}
     </section>

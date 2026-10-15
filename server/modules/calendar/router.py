@@ -225,18 +225,22 @@ def get_month(
 @router.get("/weeks", response_model=EventListOut)
 def get_rolling_weeks(
     from_: str | None = Query(default=None, alias="from"),
+    days: int = Query(default=14, ge=1, le=31),
     tag: list[str] | None = Query(default=None),
     exclude_tag: list[str] | None = Query(default=None),
 ) -> EventListOut:
-    """Rolling 2-week window (14 days) from today or from=YYYY-MM-DD."""
+    """Window of ``days`` (default 14) from today or from=YYYY-MM-DD."""
     anchor = None
     if from_:
         try:
             anchor = date.fromisoformat(from_)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="from must be YYYY-MM-DD") from exc
-    start, end, events = service.list_rolling_two_weeks(
-        anchor, include_tags=_split_csv(tag), exclude_tags=_split_csv(exclude_tag)
+    start, end, events = service.list_span(
+        anchor,
+        days=days,
+        include_tags=_split_csv(tag),
+        exclude_tags=_split_csv(exclude_tag),
     )
     return _list_payload(start, end, events)
 

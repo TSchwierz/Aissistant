@@ -322,6 +322,18 @@ class ClimateDB:
                 CREATE TABLE IF NOT EXISTS tag_catalog (
                     tag TEXT PRIMARY KEY
                 );
+
+                CREATE TABLE IF NOT EXISTS provider_reports (
+                    name TEXT PRIMARY KEY,
+                    ok INTEGER NOT NULL,
+                    error TEXT,
+                    temperature_c REAL,
+                    humidity_pct REAL,
+                    dew_point_c REAL,
+                    condition TEXT,
+                    wind_kph REAL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             for key, value in defaults.items():
@@ -512,6 +524,62 @@ class ClimateDB:
                 """
             ).fetchone()
         return None if row is None else _row_to_outside_reading(row)
+
+    def save_provider_reports(self, reports: list[dict[str, Any]]) -> None:
+        """Replace the latest per-provider snapshot. Safe across processes via SQLite."""
+        updated = to_iso(utc_now())
+        with self.connect() as conn:
+            for report in reports:
+                conn.execute(
+                    """
+                    INSERT INTO provider_reports(
+                        name, ok, error, temperature_c, humidity_pct,
+                        dew_point_c, condition, wind_kph, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(name) DO UPDATE SET
+                        ok = excluded.ok,
+                        error = excluded.error,
+                        temperature_c = excluded.temperature_c,
+                        humidity_pct = excluded.humidity_pct,
+                        dew_point_c = excluded.dew_point_c,
+                        condition = excluded.condition,
+                        wind_kph = excluded.wind_kph,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        str(report.get("name") or ""),
+                        1 if report.get("ok") else 0,
+                        report.get("error"),
+                        report.get("temperature_c"),
+                        report.get("humidity_pct"),
+                        report.get("dew_point_c"),
+                        report.get("condition"),
+                        report.get("wind_kph"),
+                        updated,
+                    ),
+                )
+
+    def list_provider_reports(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM provider_reports ORDER BY name ASC"
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            out.append(
+                {
+                    "name": row["name"],
+                    "ok": bool(row["ok"]),
+                    "error": row["error"],
+                    "temperature_c": row["temperature_c"],
+                    "humidity_pct": row["humidity_pct"],
+                    "dew_point_c": row["dew_point_c"],
+                    "condition": row["condition"],
+                    "wind_kph": row["wind_kph"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return out
 
     def list_outside_readings(
         self,

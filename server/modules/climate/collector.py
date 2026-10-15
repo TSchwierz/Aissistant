@@ -66,7 +66,13 @@ def _run_weather_poller(
         stop.wait(interval_seconds)
 
 
-def run_collector(cfg: AppConfig | None = None) -> None:
+_collector_stop = threading.Event()
+_collector_thread: threading.Thread | None = None
+
+
+def run_collector(
+    cfg: AppConfig | None = None, stop_event: threading.Event | None = None
+) -> None:
     cfg = cfg or load_config()
     db = ClimateDB(cfg.db_path)
     db.init_schema(default_settings(cfg))
@@ -74,7 +80,7 @@ def run_collector(cfg: AppConfig | None = None) -> None:
     advisor.ensure()
 
     sensor = create_sensor(mock=cfg.mock_sensor, gpio_pin=cfg.gpio_pin)
-    stop_event = threading.Event()
+    stop_event = stop_event or threading.Event()
 
     def _handle_signal(signum, _frame) -> None:  # noqa: ANN001
         logger.info("Received signal %s; stopping collector", signum)
@@ -145,3 +151,22 @@ def run_collector(cfg: AppConfig | None = None) -> None:
     if callable(close):
         close()
     logger.info("Collector stopped")
+
+
+def start_collector() -> None:
+    """Sample indoor climate on a daemon thread. One loop; safe to call twice."""
+    global _collector_thread
+    if _collector_thread is not None and _collector_thread.is_alive():
+        return
+    _collector_stop.clear()
+    _collector_thread = threading.Thread(
+        target=run_collector,
+        kwargs={"stop_event": _collector_stop},
+        name="climate-collector",
+        daemon=True,
+    )
+    _collector_thread.start()
+
+
+def stop_collector() -> None:
+    _collector_stop.set()

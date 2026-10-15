@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import signal
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -14,7 +17,7 @@ from server.config import get_settings
 from server.modules.health.database import get_session_factory
 from server.modules.health.models import Measurement
 from server.modules.health.okok import ScaleReading, reading_from_advertisement
-from server.modules.health.scale_window import should_listen
+from server.modules.health.scale_window import scan_requested
 from server.modules.health.schemas import MeasurementIn
 from server.modules.health.services import ingest_measurements
 
@@ -34,14 +37,63 @@ _state: dict[str, object] = {
 }
 
 
+def _data_dir() -> Path:
+    path = Path(get_settings().data_dir).expanduser().resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _mode_path() -> Path:
+    return _data_dir() / "scale_mode.json"
+
+
+def _status_path() -> Path:
+    return _data_dir() / "scale_status.json"
+
+
+def read_scale_mode() -> str:
+    """``auto``, ``on`` (manual test), or ``off``. Shared with a separate scanner process."""
+    try:
+        raw = json.loads(_mode_path().read_text(encoding="utf-8"))
+        mode = str(raw.get("mode", "auto"))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return "auto"
+    return mode if mode in {"auto", "on", "off"} else "auto"
+
+
+def set_scale_mode(mode: str) -> str:
+    if mode not in {"auto", "on", "off"}:
+        raise ValueError("mode must be auto, on, or off")
+    path = _mode_path()
+    payload = json.dumps({"mode": mode})
+    path.write_text(payload, encoding="utf-8")
+    return mode
+
+
 def scale_status() -> dict:
+    """Latest scanner state. The worker process writes the file; the API reads it."""
+    try:
+        data = json.loads(_status_path().read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            data["mode"] = read_scale_mode()
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
     with _state_lock:
-        return dict(_state)
+        state = dict(_state)
+    state["mode"] = read_scale_mode()
+    return state
 
 
 def _set_state(**kwargs: object) -> None:
     with _state_lock:
         _state.update(kwargs)
+        snapshot = dict(_state)
+    snapshot["mode"] = read_scale_mode()
+    path = _status_path()
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(snapshot), encoding="utf-8")
+    temporary.replace(path)
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -133,25 +185,29 @@ async def _scan_stable(timeout: float) -> ScaleReading | None:
     return holder.get("reading")
 
 
-def _tick() -> None:
+def _tick() -> bool:
+    """One scanner pass. Returns True when a Bluetooth scan was attempted."""
     settings = get_settings()
     start_hour = int(settings.scale_listen_start_hour)
     end_hour = int(settings.scale_listen_end_hour)
     window = f"{start_hour:02d}:00-{end_hour:02d}:00"
-    if not settings.scale_scan_enabled:
+    mode = read_scale_mode()
+    if not settings.scale_scan_enabled and mode != "on":
         _set_state(
             enabled=False,
             phase="disabled",
             detail="PA_SCALE_SCAN_ENABLED is off",
             window=window,
             recorded_today=False,
+            mode=mode,
         )
-        return
+        return False
 
     tz = ZoneInfo(settings.timezone)
     now = datetime.now(tz)
     recorded = recorded_on_local_day(now.date(), tz)
-    listening = should_listen(
+    listening = scan_requested(
+        mode=mode,
         hour=now.hour,
         recorded_today=recorded,
         start_hour=start_hour,
@@ -164,14 +220,16 @@ def _tick() -> None:
             if recorded
             else f"Listening only {window} ({settings.timezone})"
         )
+        detail = "Manual stop" if mode == "off" else detail
         _set_state(
             enabled=True,
-            phase=phase,
+            phase="stopped" if mode == "off" else phase,
             detail=detail,
             recorded_today=recorded,
             window=window,
+            mode=mode,
         )
-        return
+        return False
 
     _set_state(
         enabled=True,
@@ -180,6 +238,7 @@ def _tick() -> None:
         recorded_today=False,
         window=window,
         last_error=None,
+        mode=mode,
     )
     timeout = max(3, int(settings.scale_scan_timeout_seconds))
     try:
@@ -187,10 +246,10 @@ def _tick() -> None:
     except Exception as exc:  # noqa: BLE001 — adapter missing, BlueZ down, etc.
         logger.warning("Scale scan unavailable: %s", exc)
         _set_state(phase="error", last_error=str(exc), detail=str(exc))
-        return
+        return True
     if reading is None:
         _set_state(phase="scanning", detail="No stable reading in the last scan")
-        return
+        return True
     stored = _ingest(reading, datetime.now(tz))
     _set_state(
         phase="recorded" if stored else "scanning",
@@ -198,6 +257,7 @@ def _tick() -> None:
         last_weight_kg=round(reading.weight_kg, 2),
         detail="Stored today's measurement" if stored else "Reading was not stored",
     )
+    return True
 
 
 def _loop() -> None:
@@ -211,20 +271,31 @@ def _loop() -> None:
     )
     _stop.wait(3)
     while not _stop.is_set():
+        listened = False
         try:
-            _tick()
+            listened = _tick()
         except Exception:  # noqa: BLE001
             logger.exception("Scale scanner tick failed")
-        _stop.wait(interval)
+        # Idle passes stay short so a manual Start is picked up quickly.
+        _stop.wait(interval if listened else 2)
     logger.info("Scale scanner stopped")
+
+
+def run_forever() -> None:
+    """Block as the scale worker process. SIGINT/SIGTERM ends the loop."""
+
+    def _handle(signum, _frame) -> None:  # noqa: ANN001
+        logger.info("Scale worker received signal %s", signum)
+        _stop.set()
+
+    signal.signal(signal.SIGINT, _handle)
+    signal.signal(signal.SIGTERM, _handle)
+    _stop.clear()
+    _loop()
 
 
 def start_scale_scanner() -> None:
     global _thread
-    if not get_settings().scale_scan_enabled:
-        _set_state(enabled=False, phase="disabled", detail="PA_SCALE_SCAN_ENABLED is off")
-        logger.info("Scale scanner disabled")
-        return
     if _thread is not None and _thread.is_alive():
         return
     _stop.clear()

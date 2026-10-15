@@ -1,8 +1,9 @@
-"""Lightweight in-process news scheduler (Europe/Berlin)."""
+"""Lightweight news scheduler (Europe/Berlin)."""
 
 from __future__ import annotations
 
 import logging
+import signal
 import threading
 import time
 
@@ -40,6 +41,19 @@ def _loop() -> None:
             logger.exception("News scheduler tick failed")
         _stop.wait(interval)
     logger.info("News scheduler stopped")
+
+
+def run_forever() -> None:
+    """Block as the news worker process."""
+
+    def _handle(signum, _frame) -> None:  # noqa: ANN001
+        logger.info("News worker received signal %s", signum)
+        _stop.set()
+
+    signal.signal(signal.SIGINT, _handle)
+    signal.signal(signal.SIGTERM, _handle)
+    _stop.clear()
+    _loop()
 
 
 def start_scheduler() -> None:

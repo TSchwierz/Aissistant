@@ -215,6 +215,111 @@
   background: var(--bg);
   padding: 0.3rem;
   font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.month-cell.outside {
+  opacity: 0.45;
+}
+
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
+}
+
+.subnav button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+}
+
+.subnav button.active {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--bg);
+}
+
+.topic-form select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem;
+}
+
+.raster-head,
+.raster-allday,
+.raster-body {
+  display: grid;
+  gap: 0;
+}
+
+.raster-head div,
+.raster-allday > div {
+  border-bottom: 1px solid var(--border);
+  padding: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.raster-head .today {
+  color: var(--accent);
+}
+
+.raster-scroll {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.raster-label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  padding: 0 0.2rem;
+}
+
+.raster-col {
+  position: relative;
+  border-left: 1px solid var(--border);
+}
+
+.raster-slot {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid rgba(42, 53, 68, 0.7);
+  background: transparent;
+}
+
+.raster-event {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  z-index: 1;
+  overflow: hidden;
+  text-align: left;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--accent);
+  background: rgba(61, 184, 160, 0.28);
+  color: inherit;
+}
+
+.raster-event.static {
+  position: static;
+  display: block;
+  width: 100%;
+  margin-bottom: 2px;
 }
 
 .month-cell .daynum {

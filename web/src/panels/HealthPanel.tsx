@@ -5,8 +5,10 @@ export function HealthPanel() {
   const [stats, setStats] = useState<HealthStats | null>(null)
   const [profile, setProfile] = useState<HealthProfile | null>(null)
   const [scale, setScale] = useState<string | null>(null)
+  const [mode, setMode] = useState('auto')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -19,9 +21,10 @@ export function HealthPanel() {
       ])
       setStats(s)
       setProfile(p)
+      setMode(scan?.mode || 'auto')
       setScale(
         scan
-          ? `${scan.window} · ${scan.phase}${scan.detail ? ` — ${scan.detail}` : ''}`
+          ? `${scan.mode || 'auto'} · ${scan.window} · ${scan.phase}${scan.detail ? ` — ${scan.detail}` : ''}`
           : null,
       )
     } catch (e) {
@@ -35,6 +38,20 @@ export function HealthPanel() {
     void load()
   }, [load])
 
+  async function setScan(action: 'start' | 'stop' | 'auto') {
+    setBusy(true)
+    setError(null)
+    try {
+      const scan = await api.setScaleMode(action)
+      setMode(scan.mode || action)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const dashUrl = `${getApiBase()}/`
 
   return (
@@ -47,6 +64,15 @@ export function HealthPanel() {
       <div className="panel-actions">
         <button type="button" className="primary" onClick={() => void load()}>
           Refresh
+        </button>
+        <button type="button" disabled={busy || mode === 'on'} onClick={() => void setScan('start')}>
+          Start scan
+        </button>
+        <button type="button" disabled={busy || mode === 'off'} onClick={() => void setScan('stop')}>
+          Stop scan
+        </button>
+        <button type="button" disabled={busy || mode === 'auto'} onClick={() => void setScan('auto')}>
+          Use schedule
         </button>
         <a href={dashUrl} target="_blank" rel="noreferrer">
           <button type="button">Open Health dashboard</button>

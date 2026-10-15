@@ -348,6 +348,7 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
             "enabled": cfg.weather_enabled,
             "location": {"latitude": cfg.latitude, "longitude": cfg.longitude},
             "providers": weather.provider_names if weather else [],
+            "provider_reports": db.list_provider_reports(),
             "poll_interval_minutes": cfg.weather_poll_interval_minutes,
             "reading": _outside_reading_json(reading),
             "age_seconds": age_seconds,

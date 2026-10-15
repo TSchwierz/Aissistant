@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterator
 from uuid import uuid4
@@ -30,6 +30,12 @@ def to_iso(dt: datetime) -> str:
     return dt.isoformat(timespec="seconds")
 
 
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    return date.fromisoformat(str(value)[:10])
+
+
 def new_event_id() -> str:
     return f"evt_{uuid4().hex[:12]}"
 
@@ -46,6 +52,8 @@ class EventRow:
     tags: list[str] = field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    repeat_rule: str | None = None
+    repeat_until: date | None = None
 
 
 class CalendarDB:
@@ -94,6 +102,11 @@ class CalendarDB:
                 CREATE INDEX IF NOT EXISTS idx_event_tags_tag ON event_tags(tag);
                 """
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+            if "repeat_rule" not in columns:
+                conn.execute("ALTER TABLE events ADD COLUMN repeat_rule TEXT")
+            if "repeat_until" not in columns:
+                conn.execute("ALTER TABLE events ADD COLUMN repeat_until TEXT")
 
     def _parse_dt(self, value: str | None) -> datetime | None:
         if value is None:
@@ -118,6 +131,8 @@ class CalendarDB:
             tags=tags,
             created_at=self._parse_dt(row["created_at"]),
             updated_at=self._parse_dt(row["updated_at"]),
+            repeat_rule=(row["repeat_rule"] or None) if "repeat_rule" in row.keys() else None,
+            repeat_until=_parse_date(row["repeat_until"]) if "repeat_until" in row.keys() else None,
         )
 
     def _tags_for(self, conn: sqlite3.Connection, event_ids: list[str]) -> dict[str, list[str]]:
@@ -164,6 +179,8 @@ class CalendarDB:
         notes: str | None,
         tags: list[str],
         event_id: str | None = None,
+        repeat_rule: str | None = None,
+        repeat_until: date | None = None,
     ) -> EventRow:
         eid = event_id or new_event_id()
         now = utc_now()
@@ -172,8 +189,8 @@ class CalendarDB:
                 """
                 INSERT INTO events(
                     id, title, start_at, end_at, all_day, location, notes,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, repeat_rule, repeat_until
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     eid,
@@ -185,6 +202,8 @@ class CalendarDB:
                     notes,
                     to_iso(now),
                     to_iso(now),
+                    repeat_rule,
+                    repeat_until.isoformat() if repeat_until else None,
                 ),
             )
             self._set_tags(conn, eid, tags)
@@ -213,6 +232,8 @@ class CalendarDB:
         location: str | None = ...,  # type: ignore[assignment]
         notes: str | None = ...,  # type: ignore[assignment]
         tags: list[str] | None = None,
+        repeat_rule: str | None = ...,  # type: ignore[assignment]
+        repeat_until: date | None = ...,  # type: ignore[assignment]
     ) -> EventRow | None:
         existing = self.get_event(event_id)
         if existing is None:
@@ -225,13 +246,16 @@ class CalendarDB:
         new_location = existing.location if location is ... else location
         new_notes = existing.notes if notes is ... else notes
         new_tags = existing.tags if tags is None else tags
+        new_repeat = existing.repeat_rule if repeat_rule is ... else repeat_rule
+        new_until = existing.repeat_until if repeat_until is ... else repeat_until
 
         with self.connect() as conn:
             conn.execute(
                 """
                 UPDATE events SET
                     title = ?, start_at = ?, end_at = ?, all_day = ?,
-                    location = ?, notes = ?, updated_at = ?
+                    location = ?, notes = ?, updated_at = ?,
+                    repeat_rule = ?, repeat_until = ?
                 WHERE id = ?
                 """,
                 (
@@ -242,6 +266,8 @@ class CalendarDB:
                     new_location,
                     new_notes,
                     to_iso(now),
+                    new_repeat,
+                    new_until.isoformat() if new_until else None,
                     event_id,
                 ),
             )
@@ -272,7 +298,8 @@ class CalendarDB:
         # For all-day multi-day, end is exclusive-ish; treat end as inclusive instant.
         sql = """
             SELECT e.* FROM events e
-            WHERE e.start_at < ?
+            WHERE COALESCE(e.repeat_rule, '') = ''
+              AND e.start_at < ?
               AND COALESCE(e.end_at, e.start_at) >= ?
         """
         params: list[object] = [end_iso, start_iso]
@@ -300,6 +327,51 @@ class CalendarDB:
         sql += " ORDER BY e.start_at ASC, e.id ASC LIMIT ?"
         params.append(max(1, min(limit, 10_000)))
 
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            ids = [str(r["id"]) for r in rows]
+            tags_map = self._tags_for(conn, ids)
+        return [self._row_to_event(r, tags_map.get(str(r["id"]), [])) for r in rows]
+
+    def list_recurring_masters(
+        self,
+        *,
+        range_start: datetime,
+        range_end: datetime,
+        include_tags: list[str] | None = None,
+        exclude_tags: list[str] | None = None,
+    ) -> list[EventRow]:
+        """Series that could still place an occurrence inside the range."""
+        until_day = range_start.date().isoformat()
+        sql = """
+            SELECT e.* FROM events e
+            WHERE COALESCE(e.repeat_rule, '') != ''
+              AND e.start_at < ?
+              AND (
+                    e.repeat_until IS NULL OR e.repeat_until = ''
+                    OR e.repeat_until >= ?
+              )
+        """
+        params: list[object] = [to_iso(range_end), until_day]
+        if include_tags:
+            placeholders = ",".join("?" * len(include_tags))
+            sql += f"""
+                AND e.id IN (
+                    SELECT event_id FROM event_tags
+                    WHERE lower(tag) IN ({placeholders})
+                )
+            """
+            params.extend(t.casefold() for t in include_tags)
+        if exclude_tags:
+            placeholders = ",".join("?" * len(exclude_tags))
+            sql += f"""
+                AND e.id NOT IN (
+                    SELECT event_id FROM event_tags
+                    WHERE lower(tag) IN ({placeholders})
+                )
+            """
+            params.extend(t.casefold() for t in exclude_tags)
+        sql += " ORDER BY e.start_at ASC, e.id ASC"
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()
             ids = [str(r["id"]) for r in rows]

@@ -3,7 +3,7 @@
 import unittest
 
 from server.modules.health.okok import parse_c0_payload, parse_manufacturer_data, reading_from_advertisement
-from server.modules.health.scale_window import should_listen
+from server.modules.health.scale_window import scan_requested, should_listen
 
 
 class ListenWindowTests(unittest.TestCase):
@@ -15,6 +15,12 @@ class ListenWindowTests(unittest.TestCase):
 
     def test_stops_after_today_is_recorded(self):
         self.assertFalse(should_listen(hour=8, recorded_today=True))
+
+    def test_manual_override(self):
+        self.assertTrue(scan_requested(mode="on", hour=20, recorded_today=True))
+        self.assertFalse(scan_requested(mode="off", hour=8, recorded_today=False))
+        self.assertTrue(scan_requested(mode="auto", hour=8, recorded_today=False))
+        self.assertFalse(scan_requested(mode="auto", hour=8, recorded_today=True))
 
 
 class OkokParserTests(unittest.TestCase):
