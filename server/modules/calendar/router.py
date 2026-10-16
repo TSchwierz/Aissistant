@@ -14,6 +14,7 @@ from server.modules.calendar.schemas import (
     EventListOut,
     EventOut,
     EventUpdate,
+    TagColorIn,
     TagListOut,
 )
 
@@ -247,4 +248,10 @@ def get_rolling_weeks(
 
 @router.get("/tags", response_model=TagListOut)
 def get_tags() -> TagListOut:
-    return TagListOut(tags=service.list_tags())
+    return TagListOut(tags=service.list_tags(), colors=service.list_tag_colors())
+
+
+@router.put("/tags", response_model=TagListOut)
+def put_tag_color(body: TagColorIn) -> TagListOut:
+    service.set_tag_color(body.tag, body.color)
+    return TagListOut(tags=service.list_tags(), colors=service.list_tag_colors())

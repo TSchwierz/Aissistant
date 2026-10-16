@@ -434,6 +434,40 @@ button.linkish {
   gap: 0.75rem;
 }
 
+.weekday-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.weekday-row button {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+}
+
+.weekday-row button.primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.tag-chip input[type='color'] {
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 6px;
+}
+
 .card-head {
   display: flex;
   align-items: flex-start;

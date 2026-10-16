@@ -77,3 +77,96 @@ class RepeatTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertIsNone(events[0].repeat)
         self.assertEqual(events[0].id, events[0].series_id)
+
+    def test_weekly_on_several_weekdays(self):
+        start = datetime(2026, 10, 12, 9, 0, tzinfo=TZ)
+        self.db.create_event(
+            title="Gym",
+            start=start,
+            end=datetime(2026, 10, 12, 10, 0, tzinfo=TZ),
+            all_day=False,
+            location=None,
+            notes=None,
+            tags=[],
+            repeat_rule="weekly",
+            repeat_weekdays=[0, 3],
+        )
+        events = list_in_range(
+            datetime(2026, 10, 12, tzinfo=TZ),
+            datetime(2026, 10, 26, tzinfo=TZ),
+            db=self.db,
+        )
+        self.assertEqual(
+            [event.start[:10] for event in events],
+            ["2026-10-12", "2026-10-15", "2026-10-19", "2026-10-22"],
+        )
+
+    def test_biweekly_skips_the_off_week(self):
+        start = datetime(2026, 10, 14, 9, 0, tzinfo=TZ)
+        self.db.create_event(
+            title="Class",
+            start=start,
+            end=datetime(2026, 10, 14, 10, 0, tzinfo=TZ),
+            all_day=False,
+            location=None,
+            notes=None,
+            tags=[],
+            repeat_rule="biweekly",
+            repeat_weekdays=[0, 3],
+        )
+        events = list_in_range(
+            datetime(2026, 10, 1, tzinfo=TZ),
+            datetime(2026, 11, 15, tzinfo=TZ),
+            db=self.db,
+        )
+        self.assertEqual(
+            [event.start[:10] for event in events],
+            ["2026-10-15", "2026-10-26", "2026-10-29", "2026-11-09", "2026-11-12"],
+        )
+
+    def test_monthly_first_weekdays(self):
+        start = datetime(2026, 10, 1, 9, 0, tzinfo=TZ)
+        self.db.create_event(
+            title="Review",
+            start=start,
+            end=datetime(2026, 10, 1, 10, 0, tzinfo=TZ),
+            all_day=False,
+            location=None,
+            notes=None,
+            tags=["work"],
+            repeat_rule="monthly",
+            repeat_weekdays=[0, 3],
+        )
+        events = list_in_range(
+            datetime(2026, 10, 1, tzinfo=TZ),
+            datetime(2026, 12, 1, tzinfo=TZ),
+            db=self.db,
+        )
+        self.assertEqual(
+            [event.start[:10] for event in events],
+            ["2026-10-01", "2026-10-05", "2026-11-02", "2026-11-05"],
+        )
+        self.assertEqual(events[0].repeat, "monthly")
+        self.assertEqual(events[0].repeat_weekdays, [0, 3])
+
+    def test_monthly_same_day_clamps_short_months(self):
+        start = datetime(2026, 10, 31, 18, 0, tzinfo=TZ)
+        self.db.create_event(
+            title="Rent",
+            start=start,
+            end=None,
+            all_day=False,
+            location=None,
+            notes=None,
+            tags=[],
+            repeat_rule="monthly",
+        )
+        events = list_in_range(
+            datetime(2026, 10, 1, tzinfo=TZ),
+            datetime(2027, 4, 1, tzinfo=TZ),
+            db=self.db,
+        )
+        self.assertEqual(
+            [event.start[:10] for event in events],
+            ["2026-10-31", "2026-11-30", "2026-12-31", "2027-01-31", "2027-02-28", "2027-03-31"],
+        )

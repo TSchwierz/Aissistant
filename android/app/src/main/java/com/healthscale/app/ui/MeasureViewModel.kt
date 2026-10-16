@@ -32,7 +32,7 @@ data class UiState(
     val lastCommittedWeight: Double? = null,
     val lastStatus: String = "Step on the scale to begin",
     val pendingCount: Int = 0,
-    val serverUrl: String = "http://192.168.1.100:8741",
+    val serverUrl: String = "http://192.168.178.23:8741",
     val syncMessage: String = "",
     val error: String? = null,
 )

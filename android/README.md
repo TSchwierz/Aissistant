@@ -6,7 +6,7 @@ Package `com.healthscale.app`. The phone is a read-only dashboard for the Pi: mo
 
 ## Pi base URL
 
-Settings → **Pi server URL** (default `http://192.168.1.100:8741`). Health ingest stays `/api/...`; morning brief uses `GET /briefing/morning`.
+Settings → **Pi server URL** (default `http://192.168.178.23:8741`). Health ingest stays `/api/...`; morning brief uses `GET /briefing/morning`.
 
 ## Morning brief
 

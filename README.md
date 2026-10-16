@@ -20,7 +20,7 @@ pip install -r requirements.txt
 python -m server
 ```
 
-Env (`PA_` prefix): `PA_TIMEZONE` (default `Europe/Berlin`), `PA_HOST`, `PA_PORT`, `PA_DATA_DIR` (default `./data` — holds `health.db`, `climate.db`, `calendar.db`, `news.db`, `advisor/`), `PA_CLIMATE_MOCK_SENSOR` (optional bool), `PA_NEWS_SCHEDULER_ENABLED` (default true).
+Env (`PA_` prefix): `PA_TIMEZONE` (default `Europe/Berlin`), `PA_HOST`, `PA_PORT`, `PA_DATA_DIR` (default `~/.local/share/personal-aissistent` on Linux, `%LOCALAPPDATA%\PersonalAissistent` on Windows — outside the git checkout so `git pull` does not wipe `health.db`, `climate.db`, `calendar.db`, `news.db`, or `advisor/`. Existing files in `./data` are copied there once.), `PA_CLIMATE_MOCK_SENSOR` (optional bool), `PA_NEWS_SCHEDULER_ENABLED` (default true).
 
 ### Morning scale (Pi Bluetooth)
 
@@ -78,7 +78,7 @@ Empty useful payload → **200** + `meta.empty_reason: "no_data"` (calm script s
 cd web && npm install && npm run dev   # http://127.0.0.1:8742
 ```
 
-Tabs: morning brief, calendar (month / 2-week + tags), climate chart, health stats (+ link to `/`), news digests, plus **Download backup**. Configurable Pi base URL (default `http://127.0.0.1:8741`). Details: [`web/README.md`](web/README.md).
+Tabs: morning brief, calendar (month / 2-week + tags), climate chart, health stats (+ link to `/`), news digests, plus **Download backup**. Configurable Pi base URL (default `http://192.168.178.23:8741`). Details: [`web/README.md`](web/README.md).
 
 ### Android morning action
 
@@ -90,6 +90,20 @@ See [`android/README.md`](android/README.md).
 | Deep link | `personaissistent://morning` |
 | Flow | Fetch brief → show sections → TTS `script` → Open dashboard. **No music.** |
 | Hub URL | Settings → Pi server URL (default `:8741`) |
+
+### Phone away from home
+
+The server has no login. Do not open port **8741** on the router. Use a VPN so the phone joins the home network, then keep the same server URL.
+
+On this LAN the Pi is `192.168.178.23`. Confirm it with `ping -4 raspberrypi.fritz.box` from the PC, or `hostname -I` on the Pi. At home the phone setting is `http://192.168.178.23:8741`.
+
+**Tailscale** (stays connected on mobile data):
+
+1. Install Tailscale on the Pi and on the phone. Sign both in to the same account.
+2. On the Pi, `tailscale ip -4` prints the overlay address (`100.x.x.x`).
+3. In the phone app, set the Pi server URL to `http://100.x.x.x:8741`.
+
+**Fritz!Box WireGuard** (turn the VPN on when you want the app): after the phone connects to the Fritz VPN, `http://192.168.178.23:8741` works as if the phone were at home.
 
 ### News topics / jobs (Phase 3)
 
@@ -188,7 +202,7 @@ server/
   modules/news/       # Topics, feed collect, AI digests, scheduler
   modules/weather/    # day-overview hook → climate outdoor cache
   routers/            # /health, /briefing, /backup
-data/                 # PA_DATA_DIR (gitignored DBs)
+data/                 # legacy checkout copy; live DBs live in PA_DATA_DIR
 ```
 
 ## Git remote

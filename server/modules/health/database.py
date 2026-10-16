@@ -39,10 +39,31 @@ def get_session_factory():
     return _SessionLocal
 
 
+def _migrate_profile_columns() -> None:
+    """create_all does not add columns to an existing SQLite profile table."""
+    engine = get_engine()
+    with engine.begin() as conn:
+        rows = conn.exec_driver_sql("PRAGMA table_info(profile)").fetchall()
+        if not rows:
+            return
+        cols = {row[1] for row in rows}
+        if "activity_level" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE profile ADD COLUMN activity_level VARCHAR(32) DEFAULT 'moderate'"
+            )
+        if "target_fat_pct" not in cols:
+            conn.exec_driver_sql("ALTER TABLE profile ADD COLUMN target_fat_pct FLOAT")
+        if "meals_per_day" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE profile ADD COLUMN meals_per_day INTEGER DEFAULT 3"
+            )
+
+
 def init_db() -> None:
     from server.modules.health import models  # noqa: F401
 
     Base.metadata.create_all(bind=get_engine())
+    _migrate_profile_columns()
 
 
 def get_db():

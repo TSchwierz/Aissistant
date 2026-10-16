@@ -47,7 +47,7 @@ class MorningBriefActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 var error by remember { mutableStateOf<String?>(null) }
                 var brief by remember { mutableStateOf<MorningBrief?>(null) }
                 var speaking by remember { mutableStateOf(false) }
-                var serverUrl by remember { mutableStateOf("http://192.168.1.100:8741") }
+                var serverUrl by remember { mutableStateOf("http://192.168.178.23:8741") }
                 val scope = rememberCoroutineScope()
 
                 fun load(refresh: Boolean = false) {

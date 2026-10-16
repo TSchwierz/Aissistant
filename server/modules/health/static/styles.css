@@ -213,6 +213,31 @@ button.secondary:hover,
 
 .card .value.small { font-size: 0.95rem; font-weight: 500; }
 
+.nutrition h3 {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.nutrition .hint,
+.meals {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.nutrition .hint { margin: 0 0 0.75rem; }
+
+.meals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.9rem;
+}
+
+.meals input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 .charts-panel {
   grid-column: 1 / -1;
 }

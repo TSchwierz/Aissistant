@@ -20,7 +20,7 @@ npm run dev
 
 Open [http://127.0.0.1:8742](http://127.0.0.1:8742).
 
-Optional: `VITE_PI_API_BASE=http://192.168.178.23:8741 npm run dev` or set the URL in the top bar (saved to `localStorage`).
+The top bar defaults to `http://192.168.178.23:8741` (this LAN's Pi). Override with `VITE_PI_API_BASE` or save another URL in the top bar (`localStorage`).
 
 Production build:
 

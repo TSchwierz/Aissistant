@@ -20,6 +20,10 @@ class Profile(Base):
     height_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
     age: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sex: Mapped[str | None] = mapped_column(String(16), nullable=True)  # male / female
+    # sedentary / light / moderate / active / very_active
+    activity_level: Mapped[str] = mapped_column(String(32), default="moderate")
+    target_fat_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    meals_per_day: Mapped[int] = mapped_column(Integer, default=3)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

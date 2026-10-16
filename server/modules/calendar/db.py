@@ -36,6 +36,28 @@ def _parse_date(value: str | None) -> date | None:
     return date.fromisoformat(str(value)[:10])
 
 
+def parse_weekdays(value: str | list[int] | None) -> list[int]:
+    if not value:
+        return []
+    parts = value if isinstance(value, list) else str(value).split(",")
+    out: list[int] = []
+    for raw in parts:
+        text = str(raw).strip()
+        if not text.lstrip("-").isdigit():
+            continue
+        day = int(text)
+        if 0 <= day <= 6 and day not in out:
+            out.append(day)
+    return out
+
+
+def format_weekdays(days: list[int] | None) -> str | None:
+    cleaned = parse_weekdays(days)
+    if not cleaned:
+        return None
+    return ",".join(str(day) for day in cleaned)
+
+
 def new_event_id() -> str:
     return f"evt_{uuid4().hex[:12]}"
 
@@ -54,6 +76,7 @@ class EventRow:
     updated_at: datetime | None = None
     repeat_rule: str | None = None
     repeat_until: date | None = None
+    repeat_weekdays: list[int] = field(default_factory=list)
 
 
 class CalendarDB:
@@ -107,6 +130,16 @@ class CalendarDB:
                 conn.execute("ALTER TABLE events ADD COLUMN repeat_rule TEXT")
             if "repeat_until" not in columns:
                 conn.execute("ALTER TABLE events ADD COLUMN repeat_until TEXT")
+            if "repeat_weekdays" not in columns:
+                conn.execute("ALTER TABLE events ADD COLUMN repeat_weekdays TEXT")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tag_colors (
+                    tag TEXT PRIMARY KEY,
+                    color TEXT NOT NULL
+                )
+                """
+            )
 
     def _parse_dt(self, value: str | None) -> datetime | None:
         if value is None:
@@ -133,6 +166,9 @@ class CalendarDB:
             updated_at=self._parse_dt(row["updated_at"]),
             repeat_rule=(row["repeat_rule"] or None) if "repeat_rule" in row.keys() else None,
             repeat_until=_parse_date(row["repeat_until"]) if "repeat_until" in row.keys() else None,
+            repeat_weekdays=parse_weekdays(row["repeat_weekdays"])
+            if "repeat_weekdays" in row.keys()
+            else [],
         )
 
     def _tags_for(self, conn: sqlite3.Connection, event_ids: list[str]) -> dict[str, list[str]]:
@@ -181,6 +217,7 @@ class CalendarDB:
         event_id: str | None = None,
         repeat_rule: str | None = None,
         repeat_until: date | None = None,
+        repeat_weekdays: list[int] | None = None,
     ) -> EventRow:
         eid = event_id or new_event_id()
         now = utc_now()
@@ -189,8 +226,8 @@ class CalendarDB:
                 """
                 INSERT INTO events(
                     id, title, start_at, end_at, all_day, location, notes,
-                    created_at, updated_at, repeat_rule, repeat_until
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, repeat_rule, repeat_until, repeat_weekdays
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     eid,
@@ -204,6 +241,7 @@ class CalendarDB:
                     to_iso(now),
                     repeat_rule,
                     repeat_until.isoformat() if repeat_until else None,
+                    format_weekdays(repeat_weekdays),
                 ),
             )
             self._set_tags(conn, eid, tags)
@@ -234,6 +272,7 @@ class CalendarDB:
         tags: list[str] | None = None,
         repeat_rule: str | None = ...,  # type: ignore[assignment]
         repeat_until: date | None = ...,  # type: ignore[assignment]
+        repeat_weekdays: list[int] | None = ...,  # type: ignore[assignment]
     ) -> EventRow | None:
         existing = self.get_event(event_id)
         if existing is None:
@@ -248,6 +287,7 @@ class CalendarDB:
         new_tags = existing.tags if tags is None else tags
         new_repeat = existing.repeat_rule if repeat_rule is ... else repeat_rule
         new_until = existing.repeat_until if repeat_until is ... else repeat_until
+        new_days = existing.repeat_weekdays if repeat_weekdays is ... else (repeat_weekdays or [])
 
         with self.connect() as conn:
             conn.execute(
@@ -255,7 +295,7 @@ class CalendarDB:
                 UPDATE events SET
                     title = ?, start_at = ?, end_at = ?, all_day = ?,
                     location = ?, notes = ?, updated_at = ?,
-                    repeat_rule = ?, repeat_until = ?
+                    repeat_rule = ?, repeat_until = ?, repeat_weekdays = ?
                 WHERE id = ?
                 """,
                 (
@@ -268,6 +308,7 @@ class CalendarDB:
                     to_iso(now),
                     new_repeat,
                     new_until.isoformat() if new_until else None,
+                    format_weekdays(new_days) if new_repeat else None,
                     event_id,
                 ),
             )
@@ -384,6 +425,24 @@ class CalendarDB:
                 "SELECT DISTINCT tag FROM event_tags ORDER BY lower(tag) ASC"
             ).fetchall()
         return [str(r["tag"]) for r in rows]
+
+    def list_tag_colors(self) -> dict[str, str]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT tag, color FROM tag_colors ORDER BY lower(tag) ASC"
+            ).fetchall()
+        return {str(row["tag"]): str(row["color"]) for row in rows}
+
+    def set_tag_color(self, tag: str, color: str) -> None:
+        cleaned = " ".join(str(tag).split())
+        if not cleaned:
+            raise ValueError("tag must not be empty")
+        with self.connect() as conn:
+            conn.execute("DELETE FROM tag_colors WHERE lower(tag) = lower(?)", (cleaned,))
+            conn.execute(
+                "INSERT INTO tag_colors(tag, color) VALUES (?, ?)",
+                (cleaned, color),
+            )
 
 
 _db: CalendarDB | None = None

@@ -25,10 +25,12 @@ from server.modules.health.schemas import (
     MeasurementIn,
     MeasurementOut,
     MeasurementUpdate,
+    NutritionOut,
     ProfileOut,
     ProfileUpdate,
     StatsOut,
 )
+from server.modules.health.targets import composition_amounts
 
 MODULE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(MODULE_DIR / "templates"))
@@ -65,15 +67,19 @@ def _normalize_ingest(payload: Any) -> List[MeasurementIn]:
     return [MeasurementIn.model_validate(payload)]
 
 
-def _profile_out(profile) -> ProfileOut:
+def _profile_out(profile, nutrition: dict | None = None) -> ProfileOut:
     return ProfileOut(
         id=profile.id,
         name=profile.name or "",
         height_cm=profile.height_cm,
         age=profile.age,
         sex=profile.sex,
+        activity_level=getattr(profile, "activity_level", None) or "moderate",
+        target_fat_pct=getattr(profile, "target_fat_pct", None),
+        meals_per_day=getattr(profile, "meals_per_day", None) or 3,
         updated_at=profile.updated_at,
         is_complete=services.profile_is_complete(profile),
+        nutrition=NutritionOut.model_validate(nutrition) if nutrition else None,
     )
 
 
@@ -102,13 +108,15 @@ def post_scale_mode(body: ScaleModeIn) -> dict:
 
 @router.get("/api/profile", response_model=ProfileOut)
 def get_profile(db: Session = Depends(get_db)) -> ProfileOut:
-    return _profile_out(services.get_or_create_profile(db))
+    raw = services.compute_stats(db)
+    return _profile_out(services.get_or_create_profile(db), raw["nutrition"])
 
 
 @router.put("/api/profile", response_model=ProfileOut)
 def put_profile(body: ProfileUpdate, db: Session = Depends(get_db)) -> ProfileOut:
     profile = services.update_profile(db, body)
-    return _profile_out(profile)
+    raw = services.compute_stats(db)
+    return _profile_out(profile, raw["nutrition"])
 
 
 @router.post("/api/measurements", response_model=IngestResult)
@@ -164,6 +172,7 @@ def get_stats(db: Session = Depends(get_db)) -> StatsOut:
         max_weight=raw["max_weight"],
         weight_delta_7d=raw["weight_delta_7d"],
         profile_complete=raw["profile_complete"],
+        nutrition=NutritionOut.model_validate(raw["nutrition"]),
     )
 
 
@@ -195,9 +204,13 @@ def export_csv(
             "scale_mac",
             "bmi",
             "body_fat_pct",
+            "body_fat_kg",
+            "muscle_pct",
             "muscle_mass_kg",
             "water_pct",
+            "water_kg",
             "bone_mass_kg",
+            "bone_pct",
             "visceral_fat",
             "bmr",
             "body_age",
@@ -205,6 +218,13 @@ def export_csv(
         ]
     )
     for r in rows:
+        amounts = composition_amounts(
+            r.weight_kg,
+            r.body_fat_pct,
+            r.muscle_mass_kg,
+            r.water_pct,
+            r.bone_mass_kg,
+        )
         writer.writerow(
             [
                 r.id,
@@ -216,9 +236,13 @@ def export_csv(
                 r.scale_mac,
                 r.bmi,
                 r.body_fat_pct,
+                amounts["body_fat_kg"],
+                amounts["muscle_pct"],
                 r.muscle_mass_kg,
                 r.water_pct,
+                amounts["water_kg"],
                 r.bone_mass_kg,
+                amounts["bone_pct"],
                 r.visceral_fat,
                 r.bmr,
                 r.body_age,

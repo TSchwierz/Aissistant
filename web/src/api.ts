@@ -6,7 +6,7 @@ export function getApiBase(): string {
   const stored = localStorage.getItem(STORAGE_KEY)
   if (stored) return stored.replace(/\/$/, '')
   return (import.meta.env.VITE_PI_API_BASE as string | undefined)?.replace(/\/$/, '')
-    || 'http://127.0.0.1:8741'
+    || 'http://192.168.178.23:8741'
 }
 
 export function setApiBase(url: string): void {
@@ -110,8 +110,9 @@ export type CalendarEvent = {
   series_id?: string | null
   series_start?: string | null
   series_end?: string | null
-  repeat?: 'weekly' | 'biweekly' | null
+  repeat?: 'weekly' | 'biweekly' | 'monthly' | null
   repeat_until?: string | null
+  repeat_weekdays?: number[]
 }
 
 export type CalendarEventWrite = {
@@ -125,8 +126,9 @@ export type CalendarEventWrite = {
   clear_end?: boolean
   clear_location?: boolean
   clear_notes?: boolean
-  repeat?: 'weekly' | 'biweekly' | null
+  repeat?: 'weekly' | 'biweekly' | 'monthly' | null
   repeat_until?: string | null
+  repeat_weekdays?: number[]
   clear_repeat?: boolean
   clear_repeat_until?: boolean
 }
@@ -147,12 +149,35 @@ export type HealthStats = {
     weight_kg: number
     bmi?: number | null
     body_fat_pct?: number | null
+    body_fat_kg?: number | null
+    muscle_mass_kg?: number | null
+    muscle_pct?: number | null
+    water_pct?: number | null
+    water_kg?: number | null
+    bone_mass_kg?: number | null
+    bone_pct?: number | null
+    bmr?: number | null
   } | null
   avg_weight_7d?: number | null
   avg_weight_30d?: number | null
   min_weight?: number | null
   max_weight?: number | null
   profile_complete: boolean
+  nutrition?: NutritionTarget | null
+}
+
+export type NutritionTarget = {
+  activity_level: string
+  activity_factor: number
+  target_fat_pct?: number | null
+  meals_per_day: number
+  bmr?: number | null
+  target_calories?: number | null
+  protein_g?: number | null
+  fiber_g?: number | null
+  per_meal_calories?: number | null
+  per_meal_protein_g?: number | null
+  per_meal_fiber_g?: number | null
 }
 
 export type HealthProfile = {
@@ -161,7 +186,21 @@ export type HealthProfile = {
   height_cm?: number | null
   age?: number | null
   sex?: string | null
+  activity_level?: string
+  target_fat_pct?: number | null
+  meals_per_day?: number
   is_complete: boolean
+  nutrition?: NutritionTarget | null
+}
+
+export type HealthProfileWrite = {
+  name: string
+  height_cm?: number | null
+  age?: number | null
+  sex?: string | null
+  activity_level: string
+  target_fat_pct?: number | null
+  meals_per_day: number
 }
 
 export type ClimateCurrent = {
@@ -275,7 +314,12 @@ export const api = {
     const qs = q.toString()
     return getJson<EventList>(`/calendar/weeks${qs ? `?${qs}` : ''}`)
   },
-  calendarTags: () => getJson<{ tags: string[] }>('/calendar/tags'),
+  calendarTags: () => getJson<{ tags: string[]; colors?: Record<string, string> }>('/calendar/tags'),
+  setCalendarTagColor: (tag: string, color: string) =>
+    sendJson<{ tags: string[]; colors?: Record<string, string> }>('PUT', '/calendar/tags', {
+      tag,
+      color,
+    }),
   createCalendarEvent: (body: CalendarEventWrite) =>
     sendJson<CalendarEvent>('POST', '/calendar/events', body),
   updateCalendarEvent: (id: string, body: CalendarEventWrite) =>
@@ -301,6 +345,8 @@ export const api = {
       action,
     }),
   healthProfile: () => getJson<HealthProfile>('/api/profile'),
+  updateHealthProfile: (body: HealthProfileWrite) =>
+    sendJson<HealthProfile>('PUT', '/api/profile', body),
   climateCurrent: () => getJson<ClimateCurrent>('/climate/current'),
   climateMeasurements: (limit = 288) =>
     getJson<{ count: number; measurements: ClimateMeasurement[] }>(

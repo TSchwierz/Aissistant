@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import {
   addDays,
+  addHours,
   addMonths,
   eachDayOfInterval,
   endOfMonth,
   endOfWeek,
   format,
+  parse,
   startOfMonth,
   startOfWeek,
 } from 'date-fns'
@@ -13,6 +15,8 @@ import { api, type CalendarEvent, type CalendarEventWrite, type EventList } from
 
 type ViewMode = 'month' | 'week' | 'fortnight' | 'simple'
 type EditorMode = 'create' | 'edit'
+
+type RepeatMode = '' | 'weekly' | 'biweekly' | 'monthly'
 
 type Draft = {
   id: string
@@ -23,8 +27,30 @@ type Draft = {
   location: string
   notes: string
   tags: string
-  repeat: '' | 'weekly' | 'biweekly'
+  repeat: RepeatMode
   repeatUntil: string
+  repeatWeekdays: number[]
+}
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const TAG_PALETTE = ['#5b8def', '#3d9b8f', '#d4a056', '#c46b6b', '#9b7ed4', '#6bcb8a', '#e07a5f', '#4ea8de']
+
+function hashColor(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0
+  return TAG_PALETTE[hash % TAG_PALETTE.length]
+}
+
+function colorFor(tag: string, colors: Record<string, string>): string {
+  const assigned = Object.entries(colors).find(([name]) => name.toLowerCase() === tag.toLowerCase())
+  return assigned?.[1] || hashColor(tag)
+}
+
+function defaultTimedEnd(start: string): string {
+  if (start.length < 16) return ''
+  const parsed = parse(start.slice(0, 16), "yyyy-MM-dd'T'HH:mm", new Date())
+  if (Number.isNaN(parsed.getTime())) return ''
+  return format(addHours(parsed, 1), "yyyy-MM-dd'T'HH:mm")
 }
 
 function eventDayKey(ev: CalendarEvent): string {
@@ -41,17 +67,19 @@ function emptyDraft(): Draft {
   const start = new Date()
   start.setMinutes(0, 0, 0)
   start.setHours(start.getHours() + 1)
+  const startValue = format(start, "yyyy-MM-dd'T'HH:mm")
   return {
     id: '',
     title: '',
     allDay: false,
-    start: format(start, "yyyy-MM-dd'T'HH:mm"),
-    end: '',
+    start: startValue,
+    end: defaultTimedEnd(startValue),
     location: '',
     notes: '',
     tags: '',
     repeat: '',
     repeatUntil: '',
+    repeatWeekdays: [],
   }
 }
 
@@ -71,9 +99,22 @@ function draftFromEvent(event: CalendarEvent): Draft {
     location: event.location ?? '',
     notes: event.notes ?? '',
     tags: event.tags.join(', '),
-    repeat: event.repeat === 'weekly' || event.repeat === 'biweekly' ? event.repeat : '',
+    repeat:
+      event.repeat === 'weekly' || event.repeat === 'biweekly' || event.repeat === 'monthly'
+        ? event.repeat
+        : '',
     repeatUntil: event.repeat_until ?? '',
+    repeatWeekdays: event.repeat_weekdays ?? [],
   }
+}
+
+function repeatLabel(ev: CalendarEvent): string {
+  if (!ev.repeat) return ''
+  const days = (ev.repeat_weekdays ?? []).map((day) => WEEKDAYS[day]).filter(Boolean)
+  if (ev.repeat === 'monthly' && days.length) return `first ${days.join(' + ')} each month`
+  if (ev.repeat === 'monthly') return 'monthly'
+  const freq = ev.repeat === 'biweekly' ? 'every 2 weeks' : 'weekly'
+  return days.length > 1 ? `${freq} · ${days.join(' + ')}` : freq
 }
 
 function eventClock(ev: CalendarEvent): string {
@@ -153,6 +194,7 @@ function toWrite(draft: Draft, mode: EditorMode): CalendarEventWrite {
     clear_notes: mode === 'edit' && !notes,
     repeat: draft.repeat || null,
     repeat_until: draft.repeat ? draft.repeatUntil || null : null,
+    repeat_weekdays: draft.repeat ? draft.repeatWeekdays : [],
     clear_repeat: mode === 'edit' && !draft.repeat,
     clear_repeat_until: mode === 'edit' && !draft.repeatUntil,
   }
@@ -163,6 +205,7 @@ export function CalendarPanel() {
   const [upcomingOnly, setUpcomingOnly] = useState(false)
   const [tag, setTag] = useState('')
   const [tags, setTags] = useState<string[]>([])
+  const [tagColors, setTagColors] = useState<Record<string, string>>({})
   const [list, setList] = useState<EventList | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -192,6 +235,7 @@ export function CalendarPanel() {
           : api.calendarWeeks(format(fromDate, 'yyyy-MM-dd'), tagArg, span),
       ])
       setTags(tagList.tags)
+      setTagColors(tagList.colors ?? {})
       setList(events)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -242,9 +286,31 @@ export function CalendarPanel() {
   function openCreateAt(day: Date, hour: number) {
     const start = new Date(day)
     start.setHours(hour, 0, 0, 0)
+    const startValue = format(start, "yyyy-MM-dd'T'HH:mm")
     setEditor('create')
-    setDraft({ ...emptyDraft(), start: format(start, "yyyy-MM-dd'T'HH:mm") })
+    setDraft({ ...emptyDraft(), start: startValue, end: defaultTimedEnd(startValue) })
     setFormError(null)
+  }
+
+  function eventStyle(ev: CalendarEvent): CSSProperties | undefined {
+    const tag = ev.tags[0]
+    if (!tag) return undefined
+    const color = colorFor(tag, tagColors)
+    return {
+      borderColor: color,
+      background: `color-mix(in srgb, ${color} 32%, transparent)`,
+    }
+  }
+
+  async function saveTagColor(name: string, color: string) {
+    setTagColors((current) => ({ ...current, [name]: color }))
+    try {
+      const saved = await api.setCalendarTagColor(name, color)
+      setTagColors(saved.colors ?? {})
+      setTags(saved.tags)
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : String(e))
+    }
   }
 
   function shift(direction: number) {
@@ -410,6 +476,7 @@ export function CalendarPanel() {
                 <option value="">Does not repeat</option>
                 <option value="weekly">Every week</option>
                 <option value="biweekly">Every two weeks</option>
+                <option value="monthly">Every month</option>
               </select>
             </label>
             <label>
@@ -422,6 +489,35 @@ export function CalendarPanel() {
               />
             </label>
           </div>
+          {draft.repeat && (
+            <fieldset>
+              <legend>Days</legend>
+              <div className="weekday-row">
+                {WEEKDAYS.map((label, day) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className={draft.repeatWeekdays.includes(day) ? 'primary' : undefined}
+                    onClick={() =>
+                      setDraft((current) => {
+                        const selected = current.repeatWeekdays.includes(day)
+                          ? current.repeatWeekdays.filter((value) => value !== day)
+                          : [...current.repeatWeekdays, day].sort((a, b) => a - b)
+                        return { ...current, repeatWeekdays: selected }
+                      })
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="hint">
+                {draft.repeat === 'monthly'
+                  ? 'Selected days repeat in the first week of each month. Leave them empty to repeat on the same date.'
+                  : 'Select every day this should occur. Leave them empty to follow the start day only.'}
+              </span>
+            </fieldset>
+          )}
           <div className="time-row">
             <label>
               Start
@@ -429,7 +525,19 @@ export function CalendarPanel() {
                 type={draft.allDay ? 'date' : 'datetime-local'}
                 required
                 value={draft.allDay ? draft.start.slice(0, 10) : draft.start}
-                onChange={(event) => setDraft({ ...draft, start: event.target.value })}
+                onChange={(event) => {
+                  const start = event.target.value
+                  setDraft((current) => {
+                    const previousDefault = defaultTimedEnd(current.start)
+                    const keepAutoEnd =
+                      !current.allDay && (current.end === '' || current.end === previousDefault)
+                    return {
+                      ...current,
+                      start,
+                      end: keepAutoEnd ? defaultTimedEnd(start) : current.end,
+                    }
+                  })
+                }}
               />
             </label>
             <label>
@@ -467,6 +575,21 @@ export function CalendarPanel() {
             />
             <span className="hint">Comma-separated. Times are stored in the Pi timezone.</span>
           </label>
+          {parseTags(draft.tags).length > 0 && (
+            <div className="weekday-row">
+              {parseTags(draft.tags).map((name) => (
+                <label key={name} className="tag-chip">
+                  {name}
+                  <input
+                    type="color"
+                    aria-label={`Colour for ${name}`}
+                    value={colorFor(name, tagColors)}
+                    onChange={(event) => void saveTagColor(name, event.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
           {formError && <div className="error-box">{formError}</div>}
           <div className="panel-actions">
             <button type="submit" className="primary" disabled={saving}>
@@ -492,14 +615,22 @@ export function CalendarPanel() {
           All tags
         </button>
         {tags.map((t) => (
-          <button
-            key={t}
-            type="button"
-            className={`chip ${tag === t ? 'active' : ''}`}
-            onClick={() => setTag(t)}
-          >
-            {t}
-          </button>
+          <span key={t} className="tag-chip">
+            <button
+              type="button"
+              className={`chip ${tag === t ? 'active' : ''}`}
+              style={{ borderColor: colorFor(t, tagColors) }}
+              onClick={() => setTag(t)}
+            >
+              {t}
+            </button>
+            <input
+              type="color"
+              aria-label={`Colour for ${t}`}
+              value={colorFor(t, tagColors)}
+              onChange={(event) => void saveTagColor(t, event.target.value)}
+            />
+          </span>
         ))}
       </div>
       {loading && <p className="muted">Loading…</p>}
@@ -533,6 +664,7 @@ export function CalendarPanel() {
                           <button
                             type="button"
                             className="linkish"
+                            style={eventStyle(ev)}
                             onClick={(event) => {
                               event.stopPropagation()
                               openEdit(ev)
@@ -571,7 +703,7 @@ export function CalendarPanel() {
                   return (
                     <div key={key}>
                       {events.map((ev) => (
-                        <button key={ev.id} type="button" className="raster-event static" onClick={() => openEdit(ev)}>
+                        <button key={ev.id} type="button" className="raster-event static" style={eventStyle(ev)} onClick={() => openEdit(ev)}>
                           {ev.title}
                         </button>
                       ))}
@@ -619,7 +751,7 @@ export function CalendarPanel() {
                               key={ev.id}
                               type="button"
                               className="raster-event"
-                              style={{ top, height }}
+                              style={{ top, height, ...eventStyle(ev) }}
                               onClick={() => openEdit(ev)}
                             >
                               {eventLabel(ev)}
@@ -637,13 +769,13 @@ export function CalendarPanel() {
               {(visibleEvents.length === 0 && <div className="list-empty">No events in this window.</div>) ||
                 null}
               {visibleEvents.map((ev) => (
-                <div className="event-row" key={ev.id}>
+                <div className="event-row" key={ev.id} style={eventStyle(ev)}>
                   <div className="card-head">
                     <div>
                       <div className="when">
                         {ev.all_day ? `${eventDayKey(ev)} · all day` : ev.start}
                         {eventDayKey(ev) === todayKey ? ' · today' : ''}
-                        {ev.repeat ? ` · ${ev.repeat === 'biweekly' ? 'every 2 weeks' : 'weekly'}` : ''}
+                        {ev.repeat ? ` · ${repeatLabel(ev)}` : ''}
                       </div>
                       <strong>{ev.title}</strong>
                     </div>

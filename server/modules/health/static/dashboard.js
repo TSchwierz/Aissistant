@@ -12,6 +12,8 @@
   let currentRange = "30";
   let charts = { weight: null, fat: null, comp: null };
   let rowsById = new Map();
+  let nutrition = null;
+  let mealsTimer = null;
 
   const chartDefaults = {
     responsive: true,
@@ -35,6 +37,13 @@
   function fmt(n, digits = 1, suffix = "") {
     if (n === null || n === undefined || Number.isNaN(n)) return "—";
     return `${Number(n).toFixed(digits)}${suffix}`;
+  }
+
+  function pair(pct, kg) {
+    if ((pct === null || pct === undefined) && (kg === null || kg === undefined)) return "—";
+    const left = pct === null || pct === undefined ? "—" : fmt(pct, 1, "%");
+    const right = kg === null || kg === undefined ? "—" : fmt(kg, 1, " kg");
+    return `${left} · ${right}`;
   }
 
   function fmtWhen(iso) {
@@ -79,10 +88,12 @@
     const L = s.latest;
     document.getElementById("s-weight").textContent = L ? fmt(L.weight_kg, 2, " kg") : "—";
     document.getElementById("s-bmi").textContent = L ? fmt(L.bmi, 1) : "—";
-    document.getElementById("s-fat").textContent = L ? fmt(L.body_fat_pct, 1, "%") : "—";
-    document.getElementById("s-muscle").textContent = L ? fmt(L.muscle_mass_kg, 1, " kg") : "—";
-    document.getElementById("s-water").textContent = L ? fmt(L.water_pct, 1, "%") : "—";
+    document.getElementById("s-fat").textContent = L ? pair(L.body_fat_pct, L.body_fat_kg) : "—";
+    document.getElementById("s-muscle").textContent = L ? pair(L.muscle_pct, L.muscle_mass_kg) : "—";
+    document.getElementById("s-water").textContent = L ? pair(L.water_pct, L.water_kg) : "—";
+    document.getElementById("s-bone").textContent = L ? pair(L.bone_pct, L.bone_mass_kg) : "—";
     document.getElementById("s-bmr").textContent = L && L.bmr != null ? `${Math.round(L.bmr)}` : "—";
+    paintNutrition(s, L);
     document.getElementById("s-when").textContent = L ? fmtWhen(L.measured_at) : "—";
     const delta = s.weight_delta_7d;
     document.getElementById("s-delta").textContent =
@@ -212,10 +223,10 @@
         <td>${fmt(r.weight_kg, 2)}</td>
         <td>${r.impedance_ohm != null ? fmt(r.impedance_ohm, 1) : "—"}</td>
         <td>${fmt(r.bmi, 1)}</td>
-        <td>${fmt(r.body_fat_pct, 1)}</td>
-        <td>${fmt(r.muscle_mass_kg, 1)}</td>
-        <td>${fmt(r.water_pct, 1)}</td>
-        <td>${fmt(r.bone_mass_kg, 2)}</td>
+        <td>${pair(r.body_fat_pct, r.body_fat_kg)}</td>
+        <td>${pair(r.muscle_pct, r.muscle_mass_kg)}</td>
+        <td>${pair(r.water_pct, r.water_kg)}</td>
+        <td>${pair(r.bone_pct, r.bone_mass_kg)}</td>
         <td>${fmt(r.visceral_fat, 1)}</td>
         <td>${r.bmr != null ? Math.round(r.bmr) : "—"}</td>
         <td>${r.body_age != null ? Math.round(r.body_age) : "—"}</td>
@@ -271,32 +282,91 @@
     });
   });
 
-  profileForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
+  function profileBody() {
     const fd = new FormData(profileForm);
-    const body = {
+    const fat = String(fd.get("target_fat_pct") || "").trim();
+    const meals = Number(document.getElementById("meals-per-day").value);
+    return {
       name: fd.get("name") || "",
       height_cm: fd.get("height_cm") ? Number(fd.get("height_cm")) : null,
       age: fd.get("age") ? Number(fd.get("age")) : null,
       sex: fd.get("sex") || null,
+      activity_level: fd.get("activity_level") || "moderate",
+      target_fat_pct: fat ? Number(fat) : null,
+      meals_per_day: Number.isFinite(meals) ? meals : 3,
     };
-    profileStatus.textContent = "Saving…";
-    profileStatus.className = "status";
+  }
+
+  function paintMealLine() {
+    const meals = Number(document.getElementById("meals-per-day").value) || 1;
+    document.getElementById("meals-label").textContent = String(meals);
+    const line = document.getElementById("n-meal");
+    if (!nutrition || nutrition.target_calories == null) {
+      line.textContent = "Each meal: —";
+      return;
+    }
+    const cal = Math.round(nutrition.target_calories / meals);
+    const protein =
+      nutrition.protein_g == null ? "—" : `${(nutrition.protein_g / meals).toFixed(1)} g protein`;
+    const fiber =
+      nutrition.fiber_g == null ? "—" : `${(nutrition.fiber_g / meals).toFixed(1)} g fiber`;
+    line.textContent = `Each meal: ${cal} kcal · ${protein} · ${fiber}`;
+  }
+
+  function paintNutrition(stats, latest) {
+    nutrition = stats.nutrition || null;
+    const basis = document.getElementById("n-basis");
+    const n = nutrition;
+    if (!n) {
+      basis.textContent = "Set an activity level to calculate a daily calorie target from BMR.";
+      return;
+    }
+    const level = String(n.activity_level || "moderate").replace(/_/g, " ");
+    basis.textContent = n.bmr
+      ? `Target calories = BMR ${Math.round(n.bmr)} × ${n.activity_factor} (${level}). Protein follows your latest weight. Fiber is 14 g per 1,000 kcal.`
+      : "A measurement with BMR is needed before calories, protein, and fiber can be calculated.";
+    document.getElementById("n-cal").textContent =
+      n.target_calories != null ? `${n.target_calories} kcal` : "—";
+    document.getElementById("n-protein").textContent =
+      n.protein_g != null ? `${n.protein_g} g` : "—";
+    document.getElementById("n-fiber").textContent = n.fiber_g != null ? `${n.fiber_g} g` : "—";
+    const goal = n.target_fat_pct;
+    const current = latest && latest.body_fat_pct;
+    document.getElementById("n-fat").textContent =
+      goal == null
+        ? "—"
+        : current == null
+          ? fmt(goal, 1, "%")
+          : `${fmt(current, 1, "%")} now · ${fmt(goal, 1, "%")} goal`;
+    const slider = document.getElementById("meals-per-day");
+    if (document.activeElement !== slider && n.meals_per_day) {
+      slider.value = String(n.meals_per_day);
+    }
+    paintMealLine();
+  }
+
+  async function saveProfile(announce) {
+    if (announce) {
+      profileStatus.textContent = "Saving…";
+      profileStatus.className = "status";
+    }
     try {
       const res = await fetch("/api/profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(profileBody()),
       });
       if (!res.ok) throw new Error(await res.text());
       const p = await res.json();
-      profileStatus.textContent = p.is_complete
-        ? "Profile saved. Recalculating metrics…"
-        : "Profile saved (incomplete — body fat needs height, age, sex).";
-      profileStatus.className = "status ok";
+      if (announce) {
+        profileStatus.textContent = p.is_complete
+          ? "Profile saved. Recalculating metrics…"
+          : "Profile saved (incomplete — body fat needs height, age, sex).";
+        profileStatus.className = "status ok";
+      }
       if (p.is_complete) {
         await fetch("/api/measurements/recalculate", { method: "POST" });
-        profileStatus.textContent = "Profile saved and metrics recalculated.";
+        if (announce) profileStatus.textContent = "Profile saved and metrics recalculated.";
         const banner = document.getElementById("profile-banner");
         if (banner) banner.remove();
       }
@@ -305,6 +375,17 @@
       profileStatus.textContent = "Save failed: " + err.message;
       profileStatus.className = "status err";
     }
+  }
+
+  profileForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    await saveProfile(true);
+  });
+
+  document.getElementById("meals-per-day").addEventListener("input", () => {
+    paintMealLine();
+    clearTimeout(mealsTimer);
+    mealsTimer = setTimeout(() => saveProfile(false), 400);
   });
 
   recalcBtn.addEventListener("click", async () => {

@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             HealthScaleTheme {
                 val url by app.settings.serverUrl.collectAsStateWithLifecycle(
-                    initialValue = "http://192.168.1.100:8741",
+                    initialValue = "http://192.168.178.23:8741",
                 )
                 var tab by remember { mutableStateOf("brief") }
                 val scope = rememberCoroutineScope()

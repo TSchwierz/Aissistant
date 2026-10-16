@@ -22,6 +22,7 @@ fi
 # LAN Pi: phones and the PC web UI must reach this host. Override by exporting PA_HOST first.
 export PA_HOST="${PA_HOST:-0.0.0.0}"
 export PA_PORT="${PA_PORT:-8741}"
-
-mkdir -p "$ROOT/data"
+# Keep SQLite outside the git checkout. Unset PA_DATA_DIR uses
+# ~/.local/share/personal-aissistent and copies any databases still in ./data.
+mkdir -p "${PA_DATA_DIR:-$HOME/.local/share/personal-aissistent}"
 exec "$PYTHON" -m server.supervisor

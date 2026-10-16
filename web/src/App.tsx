@@ -72,7 +72,7 @@ export default function App() {
             aria-label="Pi API base URL"
             value={baseDraft}
             onChange={(e) => setBaseDraft(e.target.value)}
-            placeholder="http://127.0.0.1:8741"
+            placeholder="http://192.168.178.23:8741"
           />
           <button type="button" className="primary" onClick={applyBase}>
             Save URL

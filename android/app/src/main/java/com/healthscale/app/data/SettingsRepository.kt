@@ -14,7 +14,7 @@ class SettingsRepository(private val context: Context) {
 
     val serverUrl: Flow<String> = context.dataStore.data.map { prefs ->
         // Unified Personal AIssistent Pi process (was Health hub :8000).
-        prefs[serverUrlKey] ?: "http://192.168.1.100:8741"
+        prefs[serverUrlKey] ?: "http://192.168.178.23:8741"
     }
 
     suspend fun setServerUrl(url: String) {

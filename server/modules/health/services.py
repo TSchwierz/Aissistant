@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from server.modules.health.bia import BodyMetrics, compute_metrics
 from server.modules.health.models import Measurement, Profile, utcnow
+from server.modules.health.targets import daily_targets, normalize_activity
 
 
 def get_or_create_profile(db: Session) -> Profile:
@@ -201,7 +202,19 @@ def compute_stats(db: Session) -> dict:
         "max_weight": round(float(max_w), 2) if max_w is not None else None,
         "weight_delta_7d": weight_delta_7d,
         "profile_complete": profile_is_complete(profile),
+        "nutrition": nutrition_for(profile, latest),
     }
+
+
+def nutrition_for(profile: Profile, latest: Optional[Measurement]) -> dict:
+    return daily_targets(
+        activity_level=getattr(profile, "activity_level", None),
+        meals_per_day=getattr(profile, "meals_per_day", None),
+        target_fat_pct=getattr(profile, "target_fat_pct", None),
+        sex=profile.sex,
+        weight_kg=latest.weight_kg if latest is not None else None,
+        bmr=latest.bmr if latest is not None else None,
+    )
 
 
 def update_profile(db: Session, data) -> Profile:
@@ -216,6 +229,10 @@ def update_profile(db: Session, data) -> Profile:
         profile.sex = "female"
     else:
         profile.sex = data.sex
+    profile.activity_level = normalize_activity(getattr(data, "activity_level", None))
+    profile.target_fat_pct = data.target_fat_pct
+    meals = getattr(data, "meals_per_day", None)
+    profile.meals_per_day = 3 if meals is None else max(1, min(8, int(meals)))
     profile.updated_at = utcnow()
     db.commit()
     db.refresh(profile)

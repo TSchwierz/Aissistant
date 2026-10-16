@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-_REPEAT = {"weekly", "biweekly"}
+_REPEAT = {"weekly", "biweekly", "monthly"}
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _clean_tags(tags: list[str] | None) -> list[str]:
@@ -23,6 +25,28 @@ def _clean_tags(tags: list[str] | None) -> list[str]:
     return cleaned
 
 
+def _clean_weekdays(days: list[int] | None) -> list[int] | None:
+    if days is None:
+        return None
+    cleaned: list[int] = []
+    for raw in days:
+        day = int(raw)
+        if day < 0 or day > 6:
+            raise ValueError("weekday must be 0 (Monday) through 6 (Sunday)")
+        if day not in cleaned:
+            cleaned.append(day)
+    return cleaned
+
+
+def _clean_color(value: str) -> str:
+    text = value.strip()
+    if len(text) == 4 and text.startswith("#"):
+        text = "#" + "".join(ch * 2 for ch in text[1:])
+    if not _HEX_COLOR.fullmatch(text):
+        raise ValueError("color must be #RRGGBB")
+    return text.lower()
+
+
 class EventCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     start: datetime
@@ -33,6 +57,7 @@ class EventCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
     repeat: str | None = None
     repeat_until: date | None = None
+    repeat_weekdays: list[int] | None = None
 
     @field_validator("title")
     @classmethod
@@ -53,8 +78,13 @@ class EventCreate(BaseModel):
         if v is None or v == "":
             return None
         if v not in _REPEAT:
-            raise ValueError("repeat must be weekly or biweekly")
+            raise ValueError("repeat must be weekly, biweekly, or monthly")
         return v
+
+    @field_validator("repeat_weekdays")
+    @classmethod
+    def normalize_weekdays(cls, v: list[int] | None) -> list[int] | None:
+        return _clean_weekdays(v)
 
     @model_validator(mode="after")
     def end_after_start(self) -> EventCreate:
@@ -82,6 +112,7 @@ class EventUpdate(BaseModel):
     clear_repeat: bool = False
     repeat_until: date | None = None
     clear_repeat_until: bool = False
+    repeat_weekdays: list[int] | None = None
 
     @field_validator("title")
     @classmethod
@@ -106,8 +137,13 @@ class EventUpdate(BaseModel):
         if v is None or v == "":
             return None
         if v not in _REPEAT:
-            raise ValueError("repeat must be weekly or biweekly")
+            raise ValueError("repeat must be weekly, biweekly, or monthly")
         return v
+
+    @field_validator("repeat_weekdays")
+    @classmethod
+    def normalize_weekdays(cls, v: list[int] | None) -> list[int] | None:
+        return _clean_weekdays(v)
 
 
 class EventOut(BaseModel):
@@ -126,6 +162,7 @@ class EventOut(BaseModel):
     series_end: str | None = None
     repeat: str | None = None
     repeat_until: str | None = None
+    repeat_weekdays: list[int] = Field(default_factory=list)
 
 
 class EventListOut(BaseModel):
@@ -136,5 +173,24 @@ class EventListOut(BaseModel):
     events: list[EventOut]
 
 
+class TagColorIn(BaseModel):
+    tag: str = Field(min_length=1, max_length=80)
+    color: str
+
+    @field_validator("tag")
+    @classmethod
+    def strip_tag(cls, v: str) -> str:
+        text = " ".join(v.split())
+        if not text:
+            raise ValueError("tag must not be empty")
+        return text
+
+    @field_validator("color")
+    @classmethod
+    def normalize_color(cls, v: str) -> str:
+        return _clean_color(v)
+
+
 class TagListOut(BaseModel):
     tags: list[str]
+    colors: dict[str, str] = Field(default_factory=dict)

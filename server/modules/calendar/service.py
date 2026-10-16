@@ -29,12 +29,6 @@ def _master_id(event_id: str) -> str:
     return event_id.split("~", 1)[0]
 
 
-def _add_wall_days(moment: datetime, days: int, tz: ZoneInfo) -> datetime:
-    """Add calendar days while keeping the local wall-clock time."""
-    local = moment.astimezone(tz).replace(tzinfo=None)
-    return (local + timedelta(days=days)).replace(tzinfo=tz)
-
-
 def _event_out(
     row: EventRow,
     *,
@@ -63,6 +57,7 @@ def _event_out(
         series_end=to_iso(row.end) if row.end else None,
         repeat=row.repeat_rule,
         repeat_until=row.repeat_until.isoformat() if row.repeat_until else None,
+        repeat_weekdays=list(row.repeat_weekdays),
     )
 
 
@@ -70,36 +65,120 @@ def event_to_out(row: EventRow) -> EventOut:
     return _event_out(row)
 
 
+def _on_date(moment: datetime, day: Date, tz: ZoneInfo) -> datetime:
+    local = moment.astimezone(tz)
+    return datetime(
+        day.year, day.month, day.day, local.hour, local.minute, local.second, tzinfo=tz
+    )
+
+
+def _append_occurrence(
+    found: list[EventOut],
+    row: EventRow,
+    cursor: datetime,
+    duration: timedelta | None,
+    range_start: datetime,
+    range_end: datetime,
+) -> None:
+    if cursor >= range_end:
+        return
+    occ_end = cursor + duration if duration is not None else None
+    tail = occ_end or cursor
+    if tail >= range_start:
+        found.append(_event_out(row, start=cursor, end=occ_end, occurrence=True))
+
+
+def _expand_weekly(
+    row: EventRow, range_start: datetime, range_end: datetime, tz: ZoneInfo
+) -> list[EventOut]:
+    step_days = _REPEAT_DAYS.get(row.repeat_rule or "")
+    if step_days is None:
+        return []
+    week_step = 1 if row.repeat_rule == "weekly" else 2
+    start_local = row.start.astimezone(tz)
+    weekdays = list(row.repeat_weekdays) or [start_local.weekday()]
+    anchor = start_local.date() - timedelta(days=start_local.weekday())
+    duration = (row.end - row.start) if row.end is not None else None
+    range_day = range_start.astimezone(tz).date()
+    week_index = 0
+    if range_day > anchor:
+        weeks = (range_day - anchor).days // 7
+        week_index = (weeks // week_step) * week_step
+        if week_index >= week_step:
+            week_index -= week_step
+    found: list[EventOut] = []
+    for _ in range(800):
+        week_monday = anchor + timedelta(days=week_index * 7)
+        if week_monday > range_end.astimezone(tz).date():
+            break
+        if row.repeat_until is not None and week_monday > row.repeat_until + timedelta(days=6):
+            break
+        for weekday in weekdays:
+            day = week_monday + timedelta(days=weekday)
+            if day < start_local.date():
+                continue
+            if row.repeat_until is not None and day > row.repeat_until:
+                continue
+            _append_occurrence(
+                found, row, _on_date(row.start, day, tz), duration, range_start, range_end
+            )
+        week_index += week_step
+    return found
+
+
+def _expand_monthly(
+    row: EventRow, range_start: datetime, range_end: datetime, tz: ZoneInfo
+) -> list[EventOut]:
+    start_local = row.start.astimezone(tz)
+    weekdays = list(row.repeat_weekdays)
+    duration = (row.end - row.start) if row.end is not None else None
+    year, month = start_local.year, start_local.month
+    range_day = range_start.astimezone(tz).date()
+    start_index = start_local.year * 12 + start_local.month - 1
+    range_index = range_day.year * 12 + range_day.month - 1
+    jump = max(0, range_index - start_index - 1)
+    if jump:
+        index = start_index + jump
+        year, month = index // 12, index % 12 + 1
+    found: list[EventOut] = []
+    for _ in range(480):
+        month_start = Date(year, month, 1)
+        if month_start > range_end.astimezone(tz).date():
+            break
+        if row.repeat_until is not None and month_start > row.repeat_until:
+            break
+        if weekdays:
+            dates = []
+            for weekday in weekdays:
+                offset = (weekday - month_start.weekday()) % 7
+                dates.append(month_start + timedelta(days=offset))
+        else:
+            last = monthrange(year, month)[1]
+            dates = [Date(year, month, min(start_local.day, last))]
+        for day in dates:
+            if day < start_local.date():
+                continue
+            if row.repeat_until is not None and day > row.repeat_until:
+                continue
+            _append_occurrence(
+                found, row, _on_date(row.start, day, tz), duration, range_start, range_end
+            )
+        if month == 12:
+            year, month = year + 1, 1
+        else:
+            month += 1
+    return found
+
+
 def expand_series(
     row: EventRow, range_start: datetime, range_end: datetime
 ) -> list[EventOut]:
-    step = _REPEAT_DAYS.get(row.repeat_rule or "")
-    if step is None:
-        return []
     tz = _tz()
-    duration = (row.end - row.start) if row.end is not None else None
-    cursor = row.start
-    if cursor < range_start:
-        days_back = (
-            range_start.astimezone(tz).date() - row.start.astimezone(tz).date()
-        ).days
-        span = 1 if duration is None else max(1, duration.days + 1)
-        jumps = max(0, (days_back - span) // step)
-        if jumps:
-            cursor = _add_wall_days(row.start, jumps * step, tz)
-    found: list[EventOut] = []
-    for _ in range(500):
-        local_day = cursor.astimezone(tz).date()
-        if row.repeat_until is not None and local_day > row.repeat_until:
-            break
-        if cursor >= range_end:
-            break
-        occ_end = cursor + duration if duration is not None else None
-        tail = occ_end or cursor
-        if tail >= range_start:
-            found.append(_event_out(row, start=cursor, end=occ_end, occurrence=True))
-        cursor = _add_wall_days(cursor, step, tz)
-    return found
+    if row.repeat_rule == "monthly":
+        return _expand_monthly(row, range_start, range_end, tz)
+    if row.repeat_rule in _REPEAT_DAYS:
+        return _expand_weekly(row, range_start, range_end, tz)
+    return []
 
 
 def day_bounds(day: Date, tz: ZoneInfo | None = None) -> tuple[datetime, datetime]:
@@ -151,6 +230,7 @@ def create_event(body: EventCreate, db: CalendarDB | None = None) -> EventOut:
         tags=body.tags,
         repeat_rule=body.repeat,
         repeat_until=body.repeat_until,
+        repeat_weekdays=body.repeat_weekdays if body.repeat else None,
     )
     return event_to_out(row)
 
@@ -191,8 +271,11 @@ def update_event(
     if body.clear_repeat:
         kwargs["repeat_rule"] = None
         kwargs["repeat_until"] = None
+        kwargs["repeat_weekdays"] = []
     elif body.repeat is not None:
         kwargs["repeat_rule"] = body.repeat
+    if body.repeat_weekdays is not None and "repeat_weekdays" not in kwargs:
+        kwargs["repeat_weekdays"] = body.repeat_weekdays
     if "repeat_until" not in kwargs:
         if body.clear_repeat_until:
             kwargs["repeat_until"] = None
@@ -332,6 +415,16 @@ def get_today_events(*, date: str, timezone: str) -> list[dict]:
 def list_tags(db: CalendarDB | None = None) -> list[str]:
     db = db or get_calendar_db()
     return db.list_all_tags()
+
+
+def list_tag_colors(db: CalendarDB | None = None) -> dict[str, str]:
+    db = db or get_calendar_db()
+    return db.list_tag_colors()
+
+
+def set_tag_color(tag: str, color: str, db: CalendarDB | None = None) -> None:
+    db = db or get_calendar_db()
+    db.set_tag_color(tag, color)
 
 
 def startup_calendar() -> None:
