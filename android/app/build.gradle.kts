@@ -67,6 +67,10 @@ android {
     }
 }
 
+configurations.configureEach {
+    exclude(group = "com.google.guava", module = "listenablefuture")
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
@@ -92,4 +96,12 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    val camera = "1.4.1"
+    implementation("androidx.camera:camera-core:$camera")
+    implementation("androidx.camera:camera-camera2:$camera")
+    implementation("androidx.camera:camera-lifecycle:$camera")
+    implementation("androidx.camera:camera-view:$camera")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("com.google.guava:guava:33.3.1-android")
 }

@@ -1,0 +1,322 @@
+[
+  {
+    "code": "banane",
+    "name_fr": "Banane",
+    "aliases": "banana,banane",
+    "kcal_100g": 89.0,
+    "protein_100g": 1.1,
+    "carbs_100g": 20.0,
+    "fat_100g": 0.3,
+    "fiber_100g": 2.6
+  },
+  {
+    "code": "pomme",
+    "name_fr": "Pomme",
+    "aliases": "apple,apfel,pomme",
+    "kcal_100g": 52.0,
+    "protein_100g": 0.3,
+    "carbs_100g": 11.6,
+    "fat_100g": 0.2,
+    "fiber_100g": 2.4
+  },
+  {
+    "code": "avoine",
+    "name_fr": "Flocons d'avoine",
+    "aliases": "oat,oats,oatmeal,haferflocken,hafer,avoine,flocons d'avoine",
+    "kcal_100g": 371.0,
+    "protein_100g": 13.5,
+    "carbs_100g": 58.7,
+    "fat_100g": 7.0,
+    "fiber_100g": 10.0
+  },
+  {
+    "code": "lait",
+    "name_fr": "Lait demi-écrémé",
+    "aliases": "milk,milch,lait",
+    "kcal_100g": 46.0,
+    "protein_100g": 3.3,
+    "carbs_100g": 4.8,
+    "fat_100g": 1.5,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "pain",
+    "name_fr": "Pain",
+    "aliases": "bread,brot,pain",
+    "kcal_100g": 265.0,
+    "protein_100g": 9.0,
+    "carbs_100g": 49.0,
+    "fat_100g": 3.2,
+    "fiber_100g": 3.5
+  },
+  {
+    "code": "oeuf",
+    "name_fr": "Œuf",
+    "aliases": "egg,eggs,ei,eier,oeuf,œuf",
+    "kcal_100g": 143.0,
+    "protein_100g": 12.6,
+    "carbs_100g": 0.7,
+    "fat_100g": 9.5,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "riz",
+    "name_fr": "Riz cuit",
+    "aliases": "rice,reis,riz",
+    "kcal_100g": 130.0,
+    "protein_100g": 2.7,
+    "carbs_100g": 28.2,
+    "fat_100g": 0.3,
+    "fiber_100g": 0.4
+  },
+  {
+    "code": "poulet",
+    "name_fr": "Poulet",
+    "aliases": "chicken,hähnchen,haehnchen,huhn,poulet",
+    "kcal_100g": 165.0,
+    "protein_100g": 31.0,
+    "carbs_100g": 0.0,
+    "fat_100g": 3.6,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "yaourt",
+    "name_fr": "Yaourt nature",
+    "aliases": "yogurt,yoghurt,joghurt,yaourt,yogourt",
+    "kcal_100g": 61.0,
+    "protein_100g": 4.0,
+    "carbs_100g": 5.0,
+    "fat_100g": 2.5,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "pomme-de-terre",
+    "name_fr": "Pomme de terre",
+    "aliases": "potato,potatoes,kartoffel,kartoffeln,pomme de terre",
+    "kcal_100g": 85.0,
+    "protein_100g": 2.0,
+    "carbs_100g": 17.5,
+    "fat_100g": 0.1,
+    "fiber_100g": 2.2
+  },
+  {
+    "code": "pates",
+    "name_fr": "Pâtes cuites",
+    "aliases": "pasta,nudeln,pates,pâtes",
+    "kcal_100g": 131.0,
+    "protein_100g": 5.0,
+    "carbs_100g": 25.0,
+    "fat_100g": 1.1,
+    "fiber_100g": 1.8
+  },
+  {
+    "code": "beurre",
+    "name_fr": "Beurre",
+    "aliases": "butter,beurre",
+    "kcal_100g": 743.0,
+    "protein_100g": 0.7,
+    "carbs_100g": 0.6,
+    "fat_100g": 82.0,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "fromage",
+    "name_fr": "Fromage",
+    "aliases": "cheese,käse,kaese,fromage",
+    "kcal_100g": 350.0,
+    "protein_100g": 23.0,
+    "carbs_100g": 1.5,
+    "fat_100g": 28.0,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "tomate",
+    "name_fr": "Tomate",
+    "aliases": "tomato,tomate,tomaten",
+    "kcal_100g": 18.0,
+    "protein_100g": 0.9,
+    "carbs_100g": 2.6,
+    "fat_100g": 0.2,
+    "fiber_100g": 1.2
+  },
+  {
+    "code": "carotte",
+    "name_fr": "Carotte",
+    "aliases": "carrot,karotte,möhre,moehre,carotte",
+    "kcal_100g": 36.0,
+    "protein_100g": 0.8,
+    "carbs_100g": 6.7,
+    "fat_100g": 0.2,
+    "fiber_100g": 2.9
+  },
+  {
+    "code": "brocoli",
+    "name_fr": "Brocoli",
+    "aliases": "broccoli,brokkoli,brocoli",
+    "kcal_100g": 34.0,
+    "protein_100g": 2.8,
+    "carbs_100g": 2.5,
+    "fat_100g": 0.4,
+    "fiber_100g": 2.6
+  },
+  {
+    "code": "saumon",
+    "name_fr": "Saumon",
+    "aliases": "salmon,lachs,saumon",
+    "kcal_100g": 208.0,
+    "protein_100g": 20.0,
+    "carbs_100g": 0.0,
+    "fat_100g": 13.4,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "boeuf",
+    "name_fr": "Bœuf",
+    "aliases": "beef,rindfleisch,boeuf,bœuf",
+    "kcal_100g": 187.0,
+    "protein_100g": 26.0,
+    "carbs_100g": 0.0,
+    "fat_100g": 9.0,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "porc",
+    "name_fr": "Porc",
+    "aliases": "pork,schweinefleisch,porc",
+    "kcal_100g": 172.0,
+    "protein_100g": 27.0,
+    "carbs_100g": 0.0,
+    "fat_100g": 7.0,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "thon",
+    "name_fr": "Thon",
+    "aliases": "tuna,thunfisch,thon",
+    "kcal_100g": 132.0,
+    "protein_100g": 28.0,
+    "carbs_100g": 0.0,
+    "fat_100g": 1.3,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "orange",
+    "name_fr": "Orange",
+    "aliases": "orange,apfelsine",
+    "kcal_100g": 45.0,
+    "protein_100g": 0.9,
+    "carbs_100g": 8.9,
+    "fat_100g": 0.1,
+    "fiber_100g": 2.2
+  },
+  {
+    "code": "fraise",
+    "name_fr": "Fraise",
+    "aliases": "strawberry,erdbeere,fraise",
+    "kcal_100g": 32.0,
+    "protein_100g": 0.7,
+    "carbs_100g": 5.7,
+    "fat_100g": 0.3,
+    "fiber_100g": 2.0
+  },
+  {
+    "code": "huile-olive",
+    "name_fr": "Huile d'olive",
+    "aliases": "olive oil,olivenöl,olivenoel,huile d'olive",
+    "kcal_100g": 884.0,
+    "protein_100g": 0.0,
+    "carbs_100g": 0.0,
+    "fat_100g": 100.0,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "sucre",
+    "name_fr": "Sucre",
+    "aliases": "sugar,zucker,sucre",
+    "kcal_100g": 400.0,
+    "protein_100g": 0.0,
+    "carbs_100g": 100.0,
+    "fat_100g": 0.0,
+    "fiber_100g": 0.0
+  },
+  {
+    "code": "miel",
+    "name_fr": "Miel",
+    "aliases": "honey,honig,miel",
+    "kcal_100g": 304.0,
+    "protein_100g": 0.3,
+    "carbs_100g": 82.0,
+    "fat_100g": 0.0,
+    "fiber_100g": 0.2
+  },
+  {
+    "code": "amande",
+    "name_fr": "Amande",
+    "aliases": "almond,mandel,amande",
+    "kcal_100g": 589.0,
+    "protein_100g": 21.0,
+    "carbs_100g": 8.0,
+    "fat_100g": 52.0,
+    "fiber_100g": 12.5
+  },
+  {
+    "code": "lentille",
+    "name_fr": "Lentilles cuites",
+    "aliases": "lentil,lentils,linse,linsen,lentille",
+    "kcal_100g": 116.0,
+    "protein_100g": 9.0,
+    "carbs_100g": 16.0,
+    "fat_100g": 0.4,
+    "fiber_100g": 7.9
+  },
+  {
+    "code": "pois-chiche",
+    "name_fr": "Pois chiches cuits",
+    "aliases": "chickpea,chickpeas,kichererbse,pois chiche",
+    "kcal_100g": 139.0,
+    "protein_100g": 8.0,
+    "carbs_100g": 19.0,
+    "fat_100g": 2.6,
+    "fiber_100g": 7.6
+  },
+  {
+    "code": "epinard",
+    "name_fr": "Épinard",
+    "aliases": "spinach,spinat,epinard,épinard",
+    "kcal_100g": 23.0,
+    "protein_100g": 2.9,
+    "carbs_100g": 1.4,
+    "fat_100g": 0.4,
+    "fiber_100g": 2.2
+  },
+  {
+    "code": "concombre",
+    "name_fr": "Concombre",
+    "aliases": "cucumber,gurke,concombre",
+    "kcal_100g": 15.0,
+    "protein_100g": 0.6,
+    "carbs_100g": 2.2,
+    "fat_100g": 0.1,
+    "fiber_100g": 0.5
+  },
+  {
+    "code": "oignon",
+    "name_fr": "Oignon",
+    "aliases": "onion,zwiebel,oignon",
+    "kcal_100g": 40.0,
+    "protein_100g": 1.1,
+    "carbs_100g": 7.6,
+    "fat_100g": 0.1,
+    "fiber_100g": 1.7
+  },
+  {
+    "code": "cabillaud",
+    "name_fr": "Cabillaud",
+    "aliases": "cod,kabeljau,cabillaud",
+    "kcal_100g": 82.0,
+    "protein_100g": 18.0,
+    "carbs_100g": 0.0,
+    "fat_100g": 0.7,
+    "fiber_100g": 0.0
+  }
+]

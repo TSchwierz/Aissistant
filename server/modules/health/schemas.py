@@ -134,3 +134,110 @@ class StatsOut(BaseModel):
 
 
 IngestPayload = Union[MeasurementIn, MeasurementBatchIn, List[MeasurementIn]]
+
+
+class FoodHit(BaseModel):
+    name: str
+    source: str  # ciqual | off
+    source_id: str
+    kcal_100g: float
+    protein_100g: float
+    carbs_100g: float
+    fat_100g: float
+    fiber_100g: float
+
+
+class FoodSearchOut(BaseModel):
+    foods: List[FoodHit]
+
+
+class ParseIn(BaseModel):
+    text: str
+
+
+class ParsedItem(BaseModel):
+    name: str
+    grams: float
+    kcal: float
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+    fiber_g: float
+    source: str  # ciqual | off | manual
+    source_id: Optional[str] = None
+
+
+class ParseOut(BaseModel):
+    items: List[ParsedItem]
+
+
+class MealItemIn(BaseModel):
+    name: str = Field(min_length=1)
+    grams: float = Field(ge=0)
+    kcal: float = Field(ge=0)
+    protein_g: float = Field(ge=0)
+    carbs_g: float = Field(ge=0)
+    fat_g: float = Field(ge=0)
+    fiber_g: float = Field(ge=0)
+    source: str = Field(pattern="^(ciqual|off|manual)$")
+    source_id: Optional[str] = None
+
+
+class MealItemOut(BaseModel):
+    id: int
+    name: str
+    grams: float
+    kcal: float
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+    fiber_g: float
+    source: str
+    source_id: Optional[str] = None
+
+
+class MealCreate(BaseModel):
+    eaten_at: Optional[datetime] = None
+    note: str = ""
+    source: str = Field(pattern="^(text|barcode|photo)$")
+    items: List[MealItemIn] = Field(default_factory=list)
+
+
+class MealUpdate(BaseModel):
+    eaten_at: Optional[datetime] = None
+    note: str = ""
+    items: List[MealItemIn] = Field(default_factory=list)
+
+
+class MealOut(BaseModel):
+    id: int
+    eaten_at: datetime
+    note: str = ""
+    source: str
+    created_at: datetime
+    items: List[MealItemOut]
+
+
+class MealListOut(BaseModel):
+    meals: List[MealOut]
+
+
+class MacroTotals(BaseModel):
+    kcal: float
+    protein_g: float
+    carbs_g: float
+    fat_g: float
+    fiber_g: float
+
+
+class DayTargets(BaseModel):
+    target_calories: Optional[float] = None
+    protein_g: Optional[float] = None
+    fiber_g: Optional[float] = None
+
+
+class MealSummaryOut(BaseModel):
+    day: str
+    totals: MacroTotals
+    targets: Optional[DayTargets] = None
+    meals: List[MealOut]

@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, getApiBase, setApiBase } from './api'
+import { api, getApiBase } from './api'
 import { BriefPanel } from './panels/BriefPanel'
 import { CalendarPanel } from './panels/CalendarPanel'
 import { ClimatePanel } from './panels/ClimatePanel'
 import { HealthPanel } from './panels/HealthPanel'
 import { NewsPanel } from './panels/NewsPanel'
+import { SettingsPanel } from './panels/SettingsPanel'
+import { applyTheme } from './theme'
 import './App.css'
 
-type Tab = 'brief' | 'calendar' | 'climate' | 'health' | 'news'
+applyTheme()
+
+type Tab = 'brief' | 'calendar' | 'climate' | 'health' | 'news' | 'settings'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'brief', label: 'Morning brief' },
@@ -15,22 +19,21 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'climate', label: 'Climate' },
   { id: 'health', label: 'Health' },
   { id: 'news', label: 'News' },
+  { id: 'settings', label: 'Settings' },
 ]
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('brief')
-  const [baseDraft, setBaseDraft] = useState(getApiBase)
   const [conn, setConn] = useState<'unknown' | 'ok' | 'err'>('unknown')
   const [connDetail, setConnDetail] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
-  const [backupBusy, setBackupBusy] = useState(false)
-  const [backupMsg, setBackupMsg] = useState('')
+  const [navOpen, setNavOpen] = useState(false)
 
   const probe = useCallback(async () => {
     try {
-      const h = await api.healthLiveness()
+      const health = await api.healthLiveness()
       setConn('ok')
-      setConnDetail(`${h.service ?? 'ok'} · ${getApiBase()}`)
+      setConnDetail(`${health.service ?? 'ok'} · ${getApiBase()}`)
     } catch (e) {
       setConn('err')
       setConnDetail(e instanceof Error ? e.message : String(e))
@@ -41,85 +44,83 @@ export default function App() {
     void probe()
   }, [probe, reloadKey])
 
-  function applyBase() {
-    setApiBase(baseDraft)
-    setBaseDraft(getApiBase())
-    setReloadKey((k) => k + 1)
-  }
+  useEffect(() => {
+    applyTheme()
+  }, [])
 
-  async function downloadBackup() {
-    setBackupBusy(true)
-    setBackupMsg('')
-    try {
-      await api.downloadBackup()
-      setBackupMsg('Backup zip downloaded. Restore is manual — see Pi README.')
-    } catch (e) {
-      setBackupMsg(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBackupBusy(false)
+  useEffect(() => {
+    if (!navOpen) return
+    function onKey(event: KeyboardEvent) {
+      if (event.key === 'Escape') setNavOpen(false)
     }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [navOpen])
+
+  function selectTab(id: Tab) {
+    setTab(id)
+    setNavOpen(false)
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
+    <div className="app-frame">
+      <aside id="app-sidebar" className={navOpen ? 'sidebar open' : 'sidebar'}>
         <div className="brand">
           <h1>Personal AIssistent</h1>
-          <p>LAN web UI for the Pi SSOT — no AI keys in the browser.</p>
+          <p>LAN web UI for the Pi SSOT.</p>
         </div>
-        <div className="settings-bar">
-          <input
-            aria-label="Pi API base URL"
-            value={baseDraft}
-            onChange={(e) => setBaseDraft(e.target.value)}
-            placeholder="http://192.168.178.23:8741"
-          />
-          <button type="button" className="primary" onClick={applyBase}>
-            Save URL
-          </button>
-          <button type="button" onClick={() => void probe()}>
-            Test
-          </button>
-          <button
-            type="button"
-            disabled={backupBusy}
-            onClick={() => void downloadBackup()}
-            title="Download SSOT databases as a zip (restore is manual)"
+        <nav className="sidebar-nav" aria-label="Sections">
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={tab === item.id ? 'active' : undefined}
+              aria-current={tab === item.id ? 'page' : undefined}
+              onClick={() => selectTab(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-status">
+          <span
+            className={`status-pill ${conn === 'ok' ? 'ok' : conn === 'err' ? 'err' : ''}`}
+            title={connDetail || undefined}
           >
-            {backupBusy ? 'Backing up…' : 'Download backup'}
-          </button>
-          <span className={`status-pill ${conn === 'ok' ? 'ok' : conn === 'err' ? 'err' : ''}`}>
             {conn === 'unknown' ? '…' : conn === 'ok' ? 'connected' : 'offline'}
           </span>
+          {connDetail ? <p className="sidebar-detail">{connDetail}</p> : null}
         </div>
-      </header>
-      {(connDetail || backupMsg) && (
-        <p className="muted" style={{ marginTop: '-0.5rem', marginBottom: '0.85rem' }}>
-          {connDetail}
-          {backupMsg ? `${connDetail ? ' · ' : ''}${backupMsg}` : ''}
-        </p>
-      )}
-
-      <nav className="nav" aria-label="Sections">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={tab === t.id ? 'active' : undefined}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
-
-      <main key={`${tab}-${reloadKey}`}>
-        {tab === 'brief' && <BriefPanel />}
-        {tab === 'calendar' && <CalendarPanel />}
-        {tab === 'climate' && <ClimatePanel />}
-        {tab === 'health' && <HealthPanel />}
-        {tab === 'news' && <NewsPanel />}
-      </main>
+      </aside>
+      {navOpen ? (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close menu"
+          onClick={() => setNavOpen(false)}
+        />
+      ) : null}
+      <div className="app-main">
+        <button
+          type="button"
+          className="menu-toggle"
+          aria-expanded={navOpen}
+          aria-controls="app-sidebar"
+          onClick={() => setNavOpen((open) => !open)}
+        >
+          Menu
+        </button>
+        <main key={`${tab}-${reloadKey}`}>
+          {tab === 'brief' && <BriefPanel />}
+          {tab === 'calendar' && <CalendarPanel />}
+          {tab === 'climate' && <ClimatePanel />}
+          {tab === 'health' && <HealthPanel />}
+          {tab === 'news' && <NewsPanel />}
+          {tab === 'settings' && (
+            <SettingsPanel onReload={() => setReloadKey((key) => key + 1)} />
+          )}
+        </main>
+      </div>
     </div>
   )
 }

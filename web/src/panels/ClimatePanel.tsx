@@ -18,15 +18,43 @@ import {
   type ClimateSettings,
 } from '../api'
 import { getApiBase } from '../api'
+import { themeChartColors } from '../theme'
 
 ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Tooltip, Legend, Filler)
 
+type ClimateSection = 'now' | 'history' | 'outside' | 'settings'
+
+function climateChartOptions() {
+  const colors = themeChartColors()
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: colors.muted } } },
+    scales: {
+      x: {
+        ticks: { color: colors.muted, maxTicksLimit: 8 },
+        grid: { color: colors.grid },
+      },
+      y: {
+        position: 'left' as const,
+        ticks: { color: colors.muted },
+        grid: { color: colors.grid },
+      },
+      y1: {
+        position: 'right' as const,
+        ticks: { color: colors.muted },
+        grid: { drawOnChartArea: false },
+      },
+    },
+  }
+}
+
 export function ClimatePanel() {
+  const [section, setSection] = useState<ClimateSection>('now')
   const [current, setCurrent] = useState<ClimateCurrent | null>(null)
   const [rows, setRows] = useState<ClimateMeasurement[]>([])
   const [outside, setOutside] = useState<ClimateOutside | null>(null)
   const [settings, setSettings] = useState<ClimateSettings | null>(null)
-  const [strategies, setStrategies] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -36,18 +64,16 @@ export function ClimatePanel() {
     setLoading(true)
     setError(null)
     try {
-      const [cur, meas, out, cfg, advice] = await Promise.all([
+      const [cur, meas, out, cfg] = await Promise.all([
         api.climateCurrent(),
         api.climateMeasurements(288),
         api.climateOutside().catch(() => null),
         api.climateSettings().catch(() => null),
-        api.climateStrategies().catch(() => ({ markdown: '' })),
       ])
       setCurrent(cur)
       setRows(meas.measurements)
       setOutside(out)
       setSettings(cfg)
-      setStrategies(advice.markdown)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -60,6 +86,7 @@ export function ClimatePanel() {
   }, [load])
 
   const chartData = useMemo(() => {
+    const colors = themeChartColors()
     const labels = rows.map((r) =>
       new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     )
@@ -69,8 +96,8 @@ export function ClimatePanel() {
         {
           label: 'Temp °C',
           data: rows.map((r) => r.temperature_c),
-          borderColor: '#3db8a0',
-          backgroundColor: 'rgba(61,184,160,0.15)',
+          borderColor: colors.accent,
+          backgroundColor: colors.accentFill,
           tension: 0.25,
           yAxisID: 'y',
           fill: true,
@@ -78,7 +105,7 @@ export function ClimatePanel() {
         {
           label: 'Humidity %',
           data: rows.map((r) => r.humidity_pct),
-          borderColor: '#7aa2d6',
+          borderColor: colors.secondary,
           backgroundColor: 'transparent',
           tension: 0.25,
           yAxisID: 'y1',
@@ -141,68 +168,125 @@ export function ClimatePanel() {
       {error && <div className="error-box">{error}</div>}
       {current && !loading && (
         <>
-          <div className="grid-2">
-            <div className="stat">
-              <div className="label">Indoor temp</div>
-              <div className="value">{m ? `${m.temperature_c.toFixed(1)}°C` : '—'}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Indoor humidity</div>
-              <div className="value">{m ? `${m.humidity_pct.toFixed(1)}%` : '—'}</div>
-            </div>
-            <div className="stat">
-              <div className="label">Band status</div>
-              <div className="value" style={{ fontSize: '1.05rem' }}>
-                {current.status?.overall ?? '—'}
-              </div>
-            </div>
-            <div className="stat">
-              <div className="label">Outside</div>
-              <div className="value" style={{ fontSize: '1.05rem' }}>
-                {reading
-                  ? `${reading.temperature_c?.toFixed?.(1) ?? '—'}°C · ${reading.condition ?? '—'}`
-                  : '—'}
-              </div>
-            </div>
+          <div className="subnav" role="tablist" aria-label="Climate sections">
+            <button
+              type="button"
+              className={section === 'now' ? 'active' : undefined}
+              onClick={() => setSection('now')}
+            >
+              Now
+            </button>
+            <button
+              type="button"
+              className={section === 'history' ? 'active' : undefined}
+              onClick={() => setSection('history')}
+            >
+              History
+            </button>
+            <button
+              type="button"
+              className={section === 'outside' ? 'active' : undefined}
+              onClick={() => setSection('outside')}
+            >
+              Outside
+            </button>
+            <button
+              type="button"
+              className={section === 'settings' ? 'active' : undefined}
+              onClick={() => setSection('settings')}
+            >
+              Settings
+            </button>
           </div>
-          <div className="section-card" style={{ marginTop: '0.85rem' }}>
-            <div className="card-head">
-              <h3>Outside providers</h3>
-              <button type="button" onClick={() => void refreshOutside()}>
-                Refresh outside
-              </button>
-            </div>
-            {reports.length === 0 && (
-              <p className="muted" style={{ margin: 0 }}>
-                No provider readings stored yet. The sampler polls Open-Meteo, OpenWeatherMap, and
-                Bright Sky on its own; Refresh outside asks them now.
-              </p>
-            )}
-            <div className="grid-2">
-              {reports.map((report) => (
-                <div key={report.name}>
-                  <strong>{report.name}</strong>
-                  <div className="muted">
-                    {report.ok
-                      ? `${report.temperature_c ?? '—'}°C · ${report.humidity_pct ?? '—'}% · ${report.condition ?? '—'}`
-                      : report.error || 'unavailable'}
+          {section === 'now' && (
+            <>
+              <div className="grid-2">
+                <div className="stat">
+                  <div className="label">Indoor temp</div>
+                  <div className="value">{m ? `${m.temperature_c.toFixed(1)}°C` : '—'}</div>
+                </div>
+                <div className="stat">
+                  <div className="label">Indoor humidity</div>
+                  <div className="value">{m ? `${m.humidity_pct.toFixed(1)}%` : '—'}</div>
+                </div>
+                <div className="stat">
+                  <div className="label">Band status</div>
+                  <div className="value" style={{ fontSize: '1.05rem' }}>
+                    {current.status?.overall ?? '—'}
                   </div>
                 </div>
-              ))}
+              </div>
+              <div className="section-card" style={{ marginTop: '0.85rem' }}>
+                <h3>Humidity</h3>
+                <p style={{ margin: 0 }}>
+                  {ventilation?.reason || 'No ventilation advice yet.'}
+                </p>
+              </div>
+              {current.open_incident && (
+                <div className="section-card">
+                  <h3>Open incident</h3>
+                  <p style={{ margin: 0 }}>
+                    #{current.open_incident.id} · {current.open_incident.metric}{' '}
+                    {current.open_incident.direction}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+          {section === 'history' && (
+            <div className="chart-wrap">
+              {rows.length > 0 ? (
+                <Line
+                  data={chartData}
+                  options={climateChartOptions()}
+                />
+              ) : (
+                <div className="list-empty">No indoor measurements yet (mock sensor seeds on API start).</div>
+              )}
             </div>
-          </div>
-          <div className="section-card">
-            <h3>Humidity</h3>
-            <p style={{ margin: 0 }}>
-              {ventilation?.reason || 'No ventilation advice yet.'}
-            </p>
-            {strategies.trim() && (
-              <pre className="script-box" style={{ marginTop: '0.75rem', maxHeight: 160 }}>
-                {strategies}
-              </pre>
-            )}
-          </div>
-          {settings && (
+          )}
+          {section === 'outside' && (
+            <>
+              <div className="grid-2">
+                <div className="stat">
+                  <div className="label">Outside</div>
+                  <div className="value" style={{ fontSize: '1.05rem' }}>
+                    {reading
+                      ? `${reading.temperature_c?.toFixed?.(1) ?? '—'}°C · ${reading.condition ?? '—'}`
+                      : '—'}
+                  </div>
+                </div>
+              </div>
+              <div className="section-card" style={{ marginTop: '0.85rem' }}>
+                <div className="card-head">
+                  <h3>Outside providers</h3>
+                  <button type="button" onClick={() => void refreshOutside()}>
+                    Refresh outside
+                  </button>
+                </div>
+                {reports.length === 0 && (
+                  <p className="muted" style={{ margin: 0 }}>
+                    No provider readings stored yet. The sampler polls Open-Meteo, OpenWeatherMap, and
+                    Bright Sky on its own; Refresh outside asks them now.
+                  </p>
+                )}
+                <div className="grid-2">
+                  {reports.map((report) => (
+                    <div key={report.name}>
+                      <strong>{report.name}</strong>
+                      <div className="muted">
+                        {report.ok
+                          ? `${report.temperature_c ?? '—'}°C · ${report.humidity_pct ?? '—'}% · ${report.condition ?? '—'}`
+                          : report.error || 'unavailable'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {formError && <div className="error-box">{formError}</div>}
+            </>
+          )}
+          {section === 'settings' && settings && (
             <form className="topic-form" onSubmit={(event) => void saveSettings(event)}>
               <h3>Bands and sample interval</h3>
               <div className="time-row">
@@ -276,45 +360,6 @@ export function ClimatePanel() {
               </div>
             </form>
           )}
-          {current.open_incident && (
-            <div className="section-card" style={{ marginTop: '0.85rem' }}>
-              <h3>Open incident</h3>
-              <p style={{ margin: 0 }}>
-                #{current.open_incident.id} · {current.open_incident.metric}{' '}
-                {current.open_incident.direction}
-              </p>
-            </div>
-          )}
-          <div className="chart-wrap">
-            {rows.length > 0 ? (
-              <Line
-                data={chartData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: { legend: { labels: { color: '#8b9aab' } } },
-                  scales: {
-                    x: {
-                      ticks: { color: '#8b9aab', maxTicksLimit: 8 },
-                      grid: { color: 'rgba(42,53,68,0.6)' },
-                    },
-                    y: {
-                      position: 'left',
-                      ticks: { color: '#8b9aab' },
-                      grid: { color: 'rgba(42,53,68,0.6)' },
-                    },
-                    y1: {
-                      position: 'right',
-                      ticks: { color: '#8b9aab' },
-                      grid: { drawOnChartArea: false },
-                    },
-                  },
-                }}
-              />
-            ) : (
-              <div className="list-empty">No indoor measurements yet (mock sensor seeds on API start).</div>
-            )}
-          </div>
         </>
       )}
     </section>

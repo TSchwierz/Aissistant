@@ -4,28 +4,36 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from server.modules.health import services
+from server.modules.health import nutrition, services
 from server.modules.health.database import get_db, init_db
 from server.modules.health.models import Measurement  # noqa: F401 — register models
 from server.modules.health.scale_scan import scale_status, set_scale_mode
 from server.modules.health.schemas import (
+    FoodSearchOut,
     IngestResult,
+    MealCreate,
+    MealListOut,
+    MealOut,
+    MealSummaryOut,
+    MealUpdate,
     MeasurementBatchIn,
     MeasurementIn,
     MeasurementOut,
     MeasurementUpdate,
     NutritionOut,
+    ParseIn,
+    ParseOut,
     ProfileOut,
     ProfileUpdate,
     StatsOut,
@@ -255,6 +263,100 @@ def export_csv(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=measurements.csv"},
     )
+
+
+@router.get("/api/foods/search", response_model=FoodSearchOut)
+def get_food_search(q: str = Query(default=""), db: Session = Depends(get_db)) -> dict:
+    return {"foods": nutrition.search_foods(db, q)}
+
+
+@router.get("/api/foods/barcode/{code}")
+def get_food_barcode(code: str, db: Session = Depends(get_db)) -> dict:
+    try:
+        hit = nutrition.lookup_barcode(db, code)
+    except nutrition.BarcodeLookupError as exc:
+        raise HTTPException(status_code=502, detail="Open Food Facts unavailable") from exc
+    if hit is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return hit
+
+
+@router.post("/api/nutrition/parse", response_model=ParseOut)
+def post_nutrition_parse(body: ParseIn, db: Session = Depends(get_db)) -> dict:
+    try:
+        items = nutrition.parse_text(db, body.text)
+    except nutrition.ModelOutputError as exc:
+        raise HTTPException(status_code=422, detail="Model output is not a list") from exc
+    if items is None:
+        raise HTTPException(status_code=503, detail=nutrition.NO_AI_DETAIL)
+    return {"items": items}
+
+
+@router.post("/api/nutrition/parse-image", response_model=ParseOut)
+async def post_nutrition_parse_image(
+    image: Optional[UploadFile] = File(default=None),
+    db: Session = Depends(get_db),
+) -> dict:
+    if image is None:
+        raise HTTPException(status_code=400, detail="Image file is required")
+    data = await image.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Image file is empty")
+    media_type = (image.content_type or "image/jpeg").split(";", 1)[0].strip().lower()
+    if media_type == "image/jpg":
+        media_type = "image/jpeg"
+    if not media_type:
+        media_type = "image/jpeg"
+    try:
+        items = nutrition.parse_image(db, data, media_type)
+    except nutrition.ModelOutputError as exc:
+        raise HTTPException(status_code=422, detail="Model output is not a list") from exc
+    if items is None:
+        raise HTTPException(status_code=503, detail=nutrition.NO_AI_DETAIL)
+    return {"items": items}
+
+
+@router.post("/api/meals", response_model=MealOut)
+def post_meal(body: MealCreate, db: Session = Depends(get_db)) -> dict:
+    return nutrition.create_meal(
+        db,
+        eaten_at=body.eaten_at,
+        note=body.note,
+        source=body.source,
+        items=body.items,
+    )
+
+
+@router.get("/api/meals/summary", response_model=MealSummaryOut)
+def get_meal_summary(day: date = Query(...), db: Session = Depends(get_db)) -> dict:
+    return nutrition.summary_for_day(db, day)
+
+
+@router.get("/api/meals", response_model=MealListOut)
+def get_meals(day: date = Query(...), db: Session = Depends(get_db)) -> dict:
+    return {"meals": nutrition.meals_for_day(db, day)}
+
+
+@router.put("/api/meals/{meal_id}", response_model=MealOut)
+def put_meal(meal_id: int, body: MealUpdate, db: Session = Depends(get_db)) -> dict:
+    updated = nutrition.update_meal(
+        db,
+        meal_id,
+        eaten_at=body.eaten_at,
+        note=body.note,
+        items=body.items,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    return updated
+
+
+@router.delete("/api/meals/{meal_id}")
+def delete_meal(meal_id: int, db: Session = Depends(get_db)) -> dict:
+    deleted = nutrition.delete_meal(db, meal_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    return {"deleted": True, "id": meal_id}
 
 
 @router.get("/", response_class=HTMLResponse)

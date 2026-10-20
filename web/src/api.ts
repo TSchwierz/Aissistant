@@ -203,6 +203,58 @@ export type HealthProfileWrite = {
   meals_per_day: number
 }
 
+export type HealthMeasurement = {
+  id: number
+  measured_at: string
+  weight_kg: number
+  body_fat_pct?: number | null
+  body_fat_kg?: number | null
+  muscle_mass_kg?: number | null
+  muscle_pct?: number | null
+  water_pct?: number | null
+  water_kg?: number | null
+  bmi?: number | null
+}
+
+export type FoodHit = {
+  name: string
+  source: 'ciqual' | 'off' | 'manual'
+  source_id?: string | null
+  kcal_100g: number
+  protein_100g: number
+  carbs_100g: number
+  fat_100g: number
+  fiber_100g: number
+}
+
+export type MealItem = {
+  id?: number
+  name: string
+  grams: number
+  kcal: number
+  protein_g: number
+  carbs_g: number
+  fat_g: number
+  fiber_g: number
+  source: 'ciqual' | 'off' | 'manual'
+  source_id?: string | null
+}
+
+export type Meal = {
+  id: number
+  eaten_at: string
+  note: string
+  source: 'text' | 'barcode' | 'photo'
+  items: MealItem[]
+}
+
+export type MealSummary = {
+  day: string
+  totals: { kcal: number; protein_g: number; carbs_g: number; fat_g: number; fiber_g: number }
+  targets: { target_calories?: number | null; protein_g?: number | null; fiber_g?: number | null } | null
+  meals: Meal[]
+}
+
 export type ClimateCurrent = {
   measurement: {
     id: number
@@ -347,6 +399,26 @@ export const api = {
   healthProfile: () => getJson<HealthProfile>('/api/profile'),
   updateHealthProfile: (body: HealthProfileWrite) =>
     sendJson<HealthProfile>('PUT', '/api/profile', body),
+  healthMeasurements: (limit = 500) =>
+    getJson<HealthMeasurement[]>(`/api/measurements?limit=${limit}`),
+  updateMeasurement: (id: number, body: { weight_kg?: number }) =>
+    sendJson<HealthMeasurement>('PUT', `/api/measurements/${id}`, body),
+  deleteMeasurement: (id: number) =>
+    sendJson<{ deleted: boolean; id: number }>('DELETE', `/api/measurements/${id}`, {}),
+  searchFoods: (q: string) =>
+    getJson<{ foods: FoodHit[] }>(`/api/foods/search?q=${encodeURIComponent(q)}`),
+  parseMeal: (text: string) =>
+    sendJson<{ items: MealItem[] }>('POST', '/api/nutrition/parse', { text }),
+  createMeal: (body: {
+    eaten_at?: string
+    note?: string
+    source: 'text' | 'barcode' | 'photo'
+    items: MealItem[]
+  }) => sendJson<Meal>('POST', '/api/meals', body),
+  deleteMeal: (id: number) =>
+    sendJson<{ deleted?: boolean; id?: number }>('DELETE', `/api/meals/${id}`, {}),
+  mealSummary: (day: string) =>
+    getJson<MealSummary>(`/api/meals/summary?day=${encodeURIComponent(day)}`),
   climateCurrent: () => getJson<ClimateCurrent>('/climate/current'),
   climateMeasurements: (limit = 288) =>
     getJson<{ count: number; measurements: ClimateMeasurement[] }>(

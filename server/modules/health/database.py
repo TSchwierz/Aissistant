@@ -64,6 +64,18 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=get_engine())
     _migrate_profile_columns()
+    _seed_generic_foods()
+
+
+def _seed_generic_foods() -> None:
+    """Upsert the starter generic-food table. Safe to call on every startup."""
+    from server.modules.health.nutrition import seed_food_generics
+
+    db = get_session_factory()()
+    try:
+        seed_food_generics(db)
+    finally:
+        db.close()
 
 
 def get_db():

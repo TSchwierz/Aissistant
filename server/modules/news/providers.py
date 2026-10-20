@@ -199,3 +199,231 @@ def summarize_digest(
             logger.exception("Provider %s exhausted retries", name)
 
     return None, attempts
+
+
+def _retry_call(provider: str, fn: Callable[[], str]) -> str:
+    """Same attempt count and backoff as digest summarization, without logging secrets."""
+    last_err: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            delay = BASE_BACKOFF_SECONDS * (2**attempt)
+            logger.warning(
+                "Provider %s attempt %s failed (%s); retry in %.1fs",
+                provider,
+                attempt + 1,
+                type(exc).__name__,
+                delay,
+            )
+            time.sleep(delay)
+    assert last_err is not None
+    raise last_err
+
+
+def _completion_text(data: dict) -> str:
+    choices = data.get("choices") or []
+    message = (choices[0] or {}).get("message") if choices else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+        return "".join(parts).strip()
+    return str(content or "").strip()
+
+
+def complete_text(system: str, user: str, settings: Settings | None = None) -> str | None:
+    """Run a text completion through the digest provider chain.
+
+    Returns None when no provider is configured or every provider fails.
+    Does not log API keys.
+    """
+    settings = settings or get_settings()
+    providers = configured_providers(settings)
+    if not providers:
+        return None
+    runners: dict[str, Callable[[], str]] = {
+        "mistral": lambda: _mistral(system, user, settings.mistral_api_key),
+        "claude": lambda: _claude(system, user, settings.anthropic_api_key),
+        "chatgpt": lambda: _chatgpt(system, user, settings.openai_api_key),
+        "gemini": lambda: _gemini(system, user, settings.gemini_api_key),
+    }
+    for name in providers:
+        try:
+            text = _retry_call(name, runners[name])
+        except Exception:  # noqa: BLE001
+            logger.error("Provider %s failed for text completion", name)
+            continue
+        if text and text.strip():
+            return text.strip()
+        logger.error("Provider %s returned an empty text completion", name)
+    return None
+
+
+_VISION_USER = "Follow the system instructions for this image."
+
+
+def _mistral_vision(system: str, data_uri: str, api_key: str) -> str:
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": "pixtral-12b-latest",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": _VISION_USER},
+                            {"type": "image_url", "image_url": {"url": data_uri}},
+                        ],
+                    },
+                ],
+                "temperature": 0.3,
+            },
+        )
+        resp.raise_for_status()
+        return _completion_text(resp.json())
+
+
+def _claude_vision(system: str, image_b64: str, media_type: str, api_key: str) -> str:
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": "claude-3-5-haiku-latest",
+                "max_tokens": 1024,
+                "system": system,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": image_b64,
+                                },
+                            },
+                            {"type": "text", "text": _VISION_USER},
+                        ],
+                    }
+                ],
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    parts = data.get("content") or []
+    text = "".join(
+        part.get("text", "")
+        for part in parts
+        if isinstance(part, dict) and part.get("type") == "text"
+    )
+    return text.strip()
+
+
+def _chatgpt_vision(system: str, data_uri: str, api_key: str) -> str:
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": _VISION_USER},
+                            {"type": "image_url", "image_url": {"url": data_uri}},
+                        ],
+                    },
+                ],
+                "temperature": 0.3,
+            },
+        )
+        resp.raise_for_status()
+        return _completion_text(resp.json())
+
+
+def _gemini_vision(system: str, image_b64: str, media_type: str, api_key: str) -> str:
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-1.5-flash:generateContent"
+    )
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            url,
+            headers={"x-goog-api-key": api_key},
+            json={
+                "systemInstruction": {"parts": [{"text": system}]},
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": _VISION_USER},
+                            {"inline_data": {"mime_type": media_type, "data": image_b64}},
+                        ],
+                    }
+                ],
+                "generationConfig": {"temperature": 0.3},
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    candidates = data.get("candidates") or []
+    parts = (((candidates[0] or {}).get("content") or {}).get("parts")) or []
+    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
+    return text.strip()
+
+
+def complete_vision(
+    system: str,
+    image: bytes,
+    media_type: str,
+    settings: Settings | None = None,
+) -> str | None:
+    """Run a vision completion through the same provider order as digests.
+
+    Image bytes are sent only in the provider request. They are not logged or stored.
+    Returns None when no provider is configured or every provider fails.
+    """
+    import base64
+
+    settings = settings or get_settings()
+    providers = configured_providers(settings)
+    if not providers:
+        return None
+    media_type = (media_type or "image/jpeg").split(";", 1)[0].strip() or "image/jpeg"
+    image_b64 = base64.standard_b64encode(image).decode("ascii")
+    data_uri = f"data:{media_type};base64,{image_b64}"
+    runners: dict[str, Callable[[], str]] = {
+        "mistral": lambda: _mistral_vision(system, data_uri, settings.mistral_api_key),
+        "claude": lambda: _claude_vision(system, image_b64, media_type, settings.anthropic_api_key),
+        "chatgpt": lambda: _chatgpt_vision(system, data_uri, settings.openai_api_key),
+        "gemini": lambda: _gemini_vision(system, image_b64, media_type, settings.gemini_api_key),
+    }
+    for name in providers:
+        try:
+            text = _retry_call(name, runners[name])
+        except Exception:  # noqa: BLE001
+            logger.error("Provider %s failed for vision completion", name)
+            continue
+        if text and text.strip():
+            return text.strip()
+        logger.error("Provider %s returned an empty vision completion", name)
+    return None
