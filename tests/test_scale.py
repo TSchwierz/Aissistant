@@ -1,7 +1,13 @@
 """OKOK parser and morning listen-window tests. No Bluetooth adapter required."""
 
+import asyncio
+import inspect
 import unittest
+from unittest.mock import patch
 
+from bleak.backends.scanner import BaseBleakScanner
+
+from server.modules.health import scale_scan
 from server.modules.health.okok import (
     ScaleReading,
     parse_c0_payload,
@@ -97,6 +103,53 @@ class ReadingHoldTests(unittest.TestCase):
         self.assertTrue(should_replace_reading(74.2, None, 74.2, 500))
         self.assertTrue(should_replace_reading(74.2, 500, 75.0, 500))
         self.assertFalse(should_replace_reading(74.2, 500, 74.25, 510))
+
+
+class ScaleScanCallbackTests(unittest.TestCase):
+    def test_detection_callback_has_two_parameters(self):
+        captured: dict[str, object] = {}
+
+        class FakeScanner:
+            def __init__(self, detection_callback=None, **kwargs):  # noqa: ANN001
+                captured["callback"] = detection_callback
+
+            async def start(self) -> None:
+                return None
+
+            async def stop(self) -> None:
+                return None
+
+        readings: list[ScaleReading] = []
+        scale_scan._stop.clear()
+
+        async def run() -> None:
+            with patch("bleak.BleakScanner", FakeScanner):
+                await scale_scan._run_cycle(0.01, readings.append, lambda: True)
+
+        asyncio.run(run())
+        callback = captured["callback"]
+        assert callable(callback)
+        self.assertEqual(len(inspect.signature(callback).parameters), 2)
+
+        class AcceptedScanner(BaseBleakScanner):
+            async def start(self) -> None:
+                return None
+
+            async def stop(self) -> None:
+                return None
+
+        AcceptedScanner(callback, None)
+
+        class Device:
+            address = "AA:BB:CC:DD:EE:FF"
+
+        class Advertisement:
+            manufacturer_data = {0x00C0: bytes([0x02, 0xEE, 0x00, 0x00, 0x00, 0x00, 0x01])}
+            service_data: dict[str, bytes] = {}
+
+        callback(Device(), Advertisement())
+        self.assertEqual(len(readings), 1)
+        self.assertAlmostEqual(readings[0].weight_kg, 75.0)
 
 
 class OkokParserTests(unittest.TestCase):

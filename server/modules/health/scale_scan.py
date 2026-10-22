@@ -297,11 +297,11 @@ def _reading_from_advertisement(device: object, advertisement: object) -> ScaleR
 async def _run_cycle(seconds: float, on_reading, stop_when) -> None:  # noqa: ANN001
     from bleak import BleakScanner
 
-    def on_advertisement(*args: object) -> None:
-        if len(args) < 2:
-            return
+    def on_advertisement(device: object, advertisement: object) -> None:
+        # Bleak rejects a callback unless inspect.signature shows exactly two
+        # parameters (BLEDevice, AdvertisementData). *args counts as one.
         try:
-            reading = _reading_from_advertisement(args[0], args[1])
+            reading = _reading_from_advertisement(device, advertisement)
         except Exception:  # noqa: BLE001 — one bad packet should not stop the scan
             logger.debug("Scale advertisement could not be parsed", exc_info=True)
             return
