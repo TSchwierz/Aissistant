@@ -7,7 +7,6 @@ import {
   PointElement,
   Tooltip,
   Legend,
-  Filler,
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import {
@@ -20,9 +19,27 @@ import {
 import { getApiBase } from '../api'
 import { themeChartColors } from '../theme'
 
-ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Tooltip, Legend, Filler)
+ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Tooltip, Legend)
 
 type ClimateSection = 'now' | 'history' | 'outside' | 'settings'
+type HistoryRange = '12h' | '24h' | '7d' | '30d'
+
+const HISTORY_RANGES: { id: HistoryRange; label: string; hours: number }[] = [
+  { id: '12h', label: '12 hours', hours: 12 },
+  { id: '24h', label: '24 hours', hours: 24 },
+  { id: '7d', label: '7 days', hours: 24 * 7 },
+  { id: '30d', label: '30 days', hours: 24 * 30 },
+]
+
+function decimate<T>(rows: T[], maxPoints: number): T[] {
+  if (rows.length <= maxPoints) return rows
+  const step = (rows.length - 1) / (maxPoints - 1)
+  const picked: T[] = []
+  for (let index = 0; index < maxPoints; index += 1) {
+    picked.push(rows[Math.round(index * step)])
+  }
+  return picked
+}
 
 function climateChartOptions() {
   const colors = themeChartColors()
@@ -51,8 +68,10 @@ function climateChartOptions() {
 
 export function ClimatePanel() {
   const [section, setSection] = useState<ClimateSection>('now')
+  const [historyRange, setHistoryRange] = useState<HistoryRange>('24h')
   const [current, setCurrent] = useState<ClimateCurrent | null>(null)
   const [rows, setRows] = useState<ClimateMeasurement[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [outside, setOutside] = useState<ClimateOutside | null>(null)
   const [settings, setSettings] = useState<ClimateSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -64,14 +83,12 @@ export function ClimatePanel() {
     setLoading(true)
     setError(null)
     try {
-      const [cur, meas, out, cfg] = await Promise.all([
+      const [cur, out, cfg] = await Promise.all([
         api.climateCurrent(),
-        api.climateMeasurements(288),
         api.climateOutside().catch(() => null),
         api.climateSettings().catch(() => null),
       ])
       setCurrent(cur)
-      setRows(meas.measurements)
       setOutside(out)
       setSettings(cfg)
     } catch (e) {
@@ -85,26 +102,60 @@ export function ClimatePanel() {
     void load()
   }, [load])
 
+  useEffect(() => {
+    if (section !== 'history') return
+    const range = HISTORY_RANGES.find((item) => item.id === historyRange) ?? HISTORY_RANGES[1]
+    let cancelled = false
+    setHistoryLoading(true)
+    void (async () => {
+      try {
+        const from = new Date(Date.now() - range.hours * 60 * 60 * 1000).toISOString()
+        const meas = await api.climateMeasurements(50_000, from)
+        if (!cancelled) {
+          setRows(meas.measurements)
+          setError(null)
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setHistoryLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [section, historyRange])
+
+  const chartRows = useMemo(() => decimate(rows, 800), [rows])
+
   const chartData = useMemo(() => {
     const colors = themeChartColors()
-    const labels = rows.map((r) =>
-      new Date(r.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    )
+    const span =
+      chartRows.length > 1
+        ? new Date(chartRows[chartRows.length - 1].ts).getTime() - new Date(chartRows[0].ts).getTime()
+        : 0
+    const labels = chartRows.map((row) => {
+      const when = new Date(row.ts)
+      return span > 36 * 60 * 60 * 1000
+        ? when.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    })
     return {
       labels,
       datasets: [
         {
           label: 'Temp °C',
-          data: rows.map((r) => r.temperature_c),
+          data: chartRows.map((r) => r.temperature_c),
           borderColor: colors.accent,
-          backgroundColor: colors.accentFill,
+          backgroundColor: 'transparent',
           tension: 0.25,
           yAxisID: 'y',
-          fill: true,
+          fill: false,
+          pointRadius: chartRows.length > 120 ? 0 : 2,
         },
         {
           label: 'Humidity %',
-          data: rows.map((r) => r.humidity_pct),
+          data: chartRows.map((r) => r.humidity_pct),
           borderColor: colors.secondary,
           backgroundColor: 'transparent',
           tension: 0.25,
@@ -112,7 +163,7 @@ export function ClimatePanel() {
         },
       ],
     }
-  }, [rows])
+  }, [chartRows])
 
   async function saveSettings(event: FormEvent) {
     event.preventDefault()
@@ -234,16 +285,29 @@ export function ClimatePanel() {
             </>
           )}
           {section === 'history' && (
-            <div className="chart-wrap">
-              {rows.length > 0 ? (
-                <Line
-                  data={chartData}
-                  options={climateChartOptions()}
-                />
-              ) : (
-                <div className="list-empty">No indoor measurements yet (mock sensor seeds on API start).</div>
-              )}
-            </div>
+            <>
+              <div className="subnav" role="group" aria-label="History range">
+                {HISTORY_RANGES.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={historyRange === item.id ? 'active' : undefined}
+                    onClick={() => setHistoryRange(item.id)}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              <div className="chart-wrap">
+                {historyLoading && chartRows.length === 0 ? (
+                  <p className="muted">Loading…</p>
+                ) : chartRows.length > 0 ? (
+                  <Line data={chartData} options={climateChartOptions()} />
+                ) : (
+                  <div className="list-empty">No indoor measurements in this range.</div>
+                )}
+              </div>
+            </>
           )}
           {section === 'outside' && (
             <>

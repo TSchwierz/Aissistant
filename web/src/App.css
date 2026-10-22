@@ -254,6 +254,11 @@
   gap: 0.25rem;
 }
 
+.event-row.today {
+  background: color-mix(in srgb, var(--accent) 28%, var(--bg-elevated));
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+
 .event-row .when {
   font-family: var(--font-mono);
   font-size: 0.82rem;
@@ -296,6 +301,11 @@
 
 .month-cell.outside {
   opacity: 0.45;
+}
+
+.month-cell.today {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  border-color: var(--accent);
 }
 
 .subnav {
@@ -343,8 +353,14 @@
   color: var(--text-muted);
 }
 
+.raster-head .today,
+.raster-allday > .today,
+.raster-col.today {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 .raster-head .today {
-  color: var(--accent);
+  color: var(--text);
 }
 
 .raster-scroll {

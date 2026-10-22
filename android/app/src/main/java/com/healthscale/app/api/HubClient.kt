@@ -340,8 +340,12 @@ class HubClient(
         )
     }
 
-    suspend fun climateHistory(baseUrl: String): List<ClimatePoint> = io {
-        jsonObject(baseUrl, "/climate/measurements?limit=288")
+    suspend fun climateHistory(baseUrl: String, fromIso: String? = null): List<ClimatePoint> = io {
+        val path = buildString {
+            append("/climate/measurements?limit=50000")
+            if (!fromIso.isNullOrBlank()) append("&from=").append(encode(fromIso))
+        }
+        jsonObject(baseUrl, path)
             .optJSONArray("measurements")
             .objects { point ->
                 ClimatePoint(

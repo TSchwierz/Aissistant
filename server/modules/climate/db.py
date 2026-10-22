@@ -402,12 +402,18 @@ class ClimateDB:
             params.append(to_iso(end))
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(1, min(limit, 100_000)))
+        # Keep the newest rows when the window is larger than `limit`, then
+        # return them oldest-first so charts read left to right.
         sql = f"""
             SELECT id, ts, temperature_c, humidity_pct
-            FROM measurements
-            {where}
+            FROM (
+                SELECT id, ts, temperature_c, humidity_pct
+                FROM measurements
+                {where}
+                ORDER BY ts DESC
+                LIMIT ?
+            )
             ORDER BY ts ASC
-            LIMIT ?
         """
         with self.connect() as conn:
             rows = conn.execute(sql, params).fetchall()

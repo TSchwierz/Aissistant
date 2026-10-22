@@ -420,10 +420,13 @@ export const api = {
   mealSummary: (day: string) =>
     getJson<MealSummary>(`/api/meals/summary?day=${encodeURIComponent(day)}`),
   climateCurrent: () => getJson<ClimateCurrent>('/climate/current'),
-  climateMeasurements: (limit = 288) =>
-    getJson<{ count: number; measurements: ClimateMeasurement[] }>(
-      `/climate/measurements?limit=${limit}`,
-    ),
+  climateMeasurements: (limit = 288, from?: string) => {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (from) params.set('from', from)
+    return getJson<{ count: number; measurements: ClimateMeasurement[] }>(
+      `/climate/measurements?${params}`,
+    )
+  },
   climateOutside: () => getJson<ClimateOutside>('/climate/outside'),
   climateSettings: () => getJson<ClimateSettings>('/climate/settings'),
   updateClimateSettings: (body: Partial<ClimateSettings>) =>

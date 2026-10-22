@@ -1,16 +1,18 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+)
 
 package com.healthscale.app.ui
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -19,9 +21,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -40,6 +40,7 @@ import com.healthscale.app.api.HealthProfile
 import com.healthscale.app.api.HealthSnapshot
 import com.healthscale.app.api.HubClient
 import com.healthscale.app.api.ScaleListener
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -56,12 +57,16 @@ fun HealthPane(baseUrl: String) {
     var tab by remember { mutableIntStateOf(0) }
     val tabs = listOf("Dashboard", "Charts", "Measurements", "Calories", "Profile")
     Column(Modifier.fillMaxSize()) {
-        ScrollableTabRow(selectedTabIndex = tab) {
+        FlowRow(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             tabs.forEachIndexed { index, label ->
-                Tab(
+                FilterChip(
                     selected = tab == index,
                     onClick = { tab = index },
-                    text = { Text(label) },
+                    label = { Text(label) },
                 )
             }
         }
@@ -102,7 +107,16 @@ private fun HealthDashboard(baseUrl: String) {
         loading = false
     }
 
-    LaunchedEffect(baseUrl) { load() }
+    LaunchedEffect(baseUrl) {
+        try {
+            load()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            error = e.message ?: "Could not open health"
+            loading = false
+        }
+    }
 
     fun setMode(action: String) {
         scope.launch {
@@ -125,7 +139,10 @@ private fun HealthDashboard(baseUrl: String) {
             "The Pi records the scale from 06:00 to 12:00, then stops for the day.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             OutlinedButton(onClick = { scope.launch { load() } }) { Text("Refresh") }
             Button(onClick = { setMode("start") }, enabled = !busy && mode != "on") { Text("Start scan") }
             Button(onClick = { setMode("stop") }, enabled = !busy && mode != "off") { Text("Stop scan") }
@@ -342,9 +359,9 @@ private fun HealthProfilePane(baseUrl: String) {
             FilterChip(selected = sex == "female", onClick = { sex = "female" }, label = { Text("Female") })
         }
         Text("Activity", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()),
+        FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             activityLevels.forEach { (id, label) ->
                 FilterChip(selected = activity == id, onClick = { activity = id }, label = { Text(label) })

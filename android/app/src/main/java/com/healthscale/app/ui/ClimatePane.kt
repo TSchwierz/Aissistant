@@ -1,15 +1,21 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+)
 
 package com.healthscale.app.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -32,6 +38,15 @@ import com.healthscale.app.api.ClimatePoint
 import com.healthscale.app.api.ClimateReading
 import com.healthscale.app.api.HubClient
 import kotlinx.coroutines.launch
+import java.time.Instant
+import kotlin.math.roundToInt
+
+private val historyRanges = listOf(
+    12 to "12 hours",
+    24 to "24 hours",
+    24 * 7 to "7 days",
+    24 * 30 to "30 days",
+)
 
 @Composable
 fun ClimatePane(baseUrl: String) {
@@ -103,6 +118,7 @@ private fun ClimateHistory(baseUrl: String) {
     val client = remember { HubClient() }
     val scope = rememberCoroutineScope()
     var points by remember { mutableStateOf<List<ClimatePoint>>(emptyList()) }
+    var hours by remember { mutableIntStateOf(24) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
 
@@ -110,7 +126,8 @@ private fun ClimateHistory(baseUrl: String) {
         loading = true
         error = null
         try {
-            points = client.climateHistory(baseUrl)
+            val from = Instant.now().minusSeconds(hours.toLong() * 3600L).toString()
+            points = client.climateHistory(baseUrl, from)
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -118,9 +135,21 @@ private fun ClimateHistory(baseUrl: String) {
         }
     }
 
-    LaunchedEffect(baseUrl) { load() }
-    val temps = points.mapNotNull { it.temperatureC }
+    LaunchedEffect(baseUrl, hours) { load() }
+    val temps = decimate(points.mapNotNull { it.temperatureC }, 400)
     SectionColumn {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            historyRanges.forEach { (value, label) ->
+                FilterChip(
+                    selected = hours == value,
+                    onClick = { hours = value },
+                    label = { Text(label) },
+                )
+            }
+        }
         OutlinedButton(onClick = { scope.launch { load() } }) { Text("Refresh") }
         if (loading) Text("Loading…")
         if (!error.isNullOrBlank()) Text(error!!, color = MaterialTheme.colorScheme.error)
@@ -325,4 +354,10 @@ private fun NumberField(
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = keyboard),
     )
+}
+
+private fun decimate(values: List<Double>, maxPoints: Int): List<Double> {
+    if (values.size <= maxPoints) return values
+    val step = (values.size - 1).toDouble() / (maxPoints - 1)
+    return List(maxPoints) { index -> values[(index * step).roundToInt()] }
 }

@@ -7,6 +7,7 @@ import json
 import logging
 import signal
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -17,9 +18,23 @@ from server.config import get_settings
 from server.modules.health.database import get_session_factory
 from server.modules.health.models import Measurement
 from server.modules.health.okok import ScaleReading, reading_from_advertisement
-from server.modules.health.scale_window import scan_requested
+from server.modules.health.scale_window import ReadingHold, scan_requested, should_replace_reading
 from server.modules.health.schemas import MeasurementIn
-from server.modules.health.services import ingest_measurements
+from server.modules.health.services import (
+    apply_metrics,
+    get_or_create_profile,
+    ingest_measurements,
+    metrics_for,
+)
+
+# The Pi's Bluetooth controller keeps only the first advertisement from a
+# scale. Later packets (the locked weight, then impedance) never reach BlueZ
+# until discovery is stopped and started again. Each cycle is short so a
+# weigh-in of about twenty seconds yields several fresh packets.
+_CYCLE_SECONDS = 2.5
+_RESTART_PAUSE_SECONDS = 0.4
+_SETTLE_SECONDS = 8.0
+_IDLE_POLL_SECONDS = 1.0
 
 logger = logging.getLogger(__name__)
 
@@ -125,86 +140,70 @@ def _client_id(day) -> str:
     return f"pi-scale-{day.isoformat()}"
 
 
-def _ingest(reading: ScaleReading, when: datetime) -> bool:
+def _ingest(reading: ScaleReading, when: datetime, *, replace: bool) -> bool:
     SessionLocal = get_session_factory()
     db = SessionLocal()
     try:
+        client_id = _client_id(when.date())
+        weight = round(reading.weight_kg, 2)
+        raw_hex = reading.raw_hex[:256] if reading.raw_hex else None
+        existing = db.scalar(select(Measurement).where(Measurement.client_id == client_id))
+        if existing is not None and not replace:
+            logger.info("Scale reading already stored for %s", when.date().isoformat())
+            return True
+        if existing is not None:
+            existing.measured_at = when
+            existing.weight_kg = weight
+            existing.impedance_ohm = reading.impedance_ohm
+            existing.unit = reading.unit or "kg"
+            existing.scale_mac = reading.scale_mac
+            existing.raw_hex = raw_hex
+            profile = get_or_create_profile(db)
+            apply_metrics(existing, metrics_for(profile, weight, reading.impedance_ohm))
+            db.commit()
+            logger.info(
+                "Updated scale weight %.2f kg (%s)", reading.weight_kg, reading.protocol
+            )
+            return True
         item = MeasurementIn(
-            client_id=_client_id(when.date()),
+            client_id=client_id,
             measured_at=when,
-            weight_kg=round(reading.weight_kg, 2),
+            weight_kg=weight,
             impedance_ohm=reading.impedance_ohm,
             unit=reading.unit or "kg",
             scale_mac=reading.scale_mac,
-            raw_hex=reading.raw_hex[:256] if reading.raw_hex else None,
+            raw_hex=raw_hex,
         )
         created, skipped, _ids = ingest_measurements(db, [item])
     finally:
         db.close()
-    if created:
+    if created or skipped:
         logger.info(
             "Recorded scale weight %.2f kg (%s)", reading.weight_kg, reading.protocol
         )
         return True
-    if skipped:
-        logger.info("Scale reading already stored for %s", when.date().isoformat())
-        return True
     return False
 
 
-async def _scan_stable(timeout: float) -> ScaleReading | None:
-    from bleak import BleakScanner
-
-    found = asyncio.Event()
-    holder: dict[str, ScaleReading] = {}
-
-    def on_advertisement(device, advertisement) -> None:
-        if found.is_set():
-            return
-        manufacturer = dict(getattr(advertisement, "manufacturer_data", None) or {})
-        service = {
-            str(key): value
-            for key, value in (getattr(advertisement, "service_data", None) or {}).items()
-        }
-        reading = reading_from_advertisement(
-            getattr(device, "address", None), manufacturer, service
-        )
-        if reading is None or not reading.stable:
-            return
-        holder["reading"] = reading
-        found.set()
-
-    scanner = BleakScanner(detection_callback=on_advertisement)
-    await scanner.start()
-    try:
-        await asyncio.wait_for(found.wait(), timeout)
-    except TimeoutError:
-        return None
-    finally:
-        await scanner.stop()
-    return holder.get("reading")
-
-
-def _tick() -> bool:
-    """One scanner pass. Returns True when a Bluetooth scan was attempted."""
+def _listen_context() -> dict[str, object]:
     settings = get_settings()
     start_hour = int(settings.scale_listen_start_hour)
     end_hour = int(settings.scale_listen_end_hour)
     window = f"{start_hour:02d}:00-{end_hour:02d}:00"
     mode = read_scale_mode()
-    if not settings.scale_scan_enabled and mode != "on":
-        _set_state(
-            enabled=False,
-            phase="disabled",
-            detail="PA_SCALE_SCAN_ENABLED is off",
-            window=window,
-            recorded_today=False,
-            mode=mode,
-        )
-        return False
-
     tz = ZoneInfo(settings.timezone)
     now = datetime.now(tz)
+    if not settings.scale_scan_enabled and mode != "on":
+        return {
+            "listening": False,
+            "enabled": False,
+            "phase": "disabled",
+            "detail": "PA_SCALE_SCAN_ENABLED is off",
+            "recorded": False,
+            "window": window,
+            "mode": mode,
+            "tz": tz,
+        }
     recorded = recorded_on_local_day(now.date(), tz)
     listening = scan_requested(
         mode=mode,
@@ -213,72 +212,233 @@ def _tick() -> bool:
         start_hour=start_hour,
         end_hour=end_hour,
     )
-    if not listening:
-        phase = "recorded" if recorded else "outside"
-        detail = (
-            "Measurement already stored for today"
-            if recorded
-            else f"Listening only {window} ({settings.timezone})"
-        )
-        detail = "Manual stop" if mode == "off" else detail
-        _set_state(
-            enabled=True,
-            phase="stopped" if mode == "off" else phase,
-            detail=detail,
-            recorded_today=recorded,
-            window=window,
-            mode=mode,
-        )
-        return False
+    if mode == "off":
+        phase, detail = "stopped", "Manual stop"
+    elif recorded and not listening:
+        phase, detail = "recorded", "Measurement already stored for today"
+    elif not listening:
+        phase, detail = "outside", f"Listening only {window} ({settings.timezone})"
+    else:
+        phase, detail = "scanning", "Looking for a stable scale broadcast"
+    return {
+        "listening": listening,
+        "enabled": True,
+        "phase": phase,
+        "detail": detail,
+        "recorded": recorded,
+        "window": window,
+        "mode": mode,
+        "tz": tz,
+    }
 
+
+def _publish(ctx: dict[str, object], **kwargs: object) -> None:
     _set_state(
-        enabled=True,
-        phase="scanning",
-        detail="Looking for a stable scale broadcast",
-        recorded_today=False,
-        window=window,
-        last_error=None,
-        mode=mode,
+        enabled=ctx["enabled"],
+        recorded_today=ctx["recorded"],
+        window=ctx["window"],
+        mode=ctx["mode"],
+        **kwargs,
     )
-    timeout = max(3, int(settings.scale_scan_timeout_seconds))
-    try:
-        reading = asyncio.run(_scan_stable(timeout))
-    except Exception as exc:  # noqa: BLE001 — adapter missing, BlueZ down, etc.
-        logger.warning("Scale scan unavailable: %s", exc)
-        _set_state(phase="error", last_error=str(exc), detail=str(exc))
-        return True
-    if reading is None:
-        _set_state(phase="scanning", detail="No stable reading in the last scan")
-        return True
-    stored = _ingest(reading, datetime.now(tz))
-    _set_state(
+
+
+def _live_detail(live: ScaleReading | None, hold: ReadingHold) -> str:
+    held = hold.reading
+    if held is not None and held.stable and held.impedance_ohm is None and not hold.done:
+        return f"{held.weight_kg:.1f} kg locked, waiting for body composition"
+    if live is not None and not live.stable:
+        return f"{live.weight_kg:.1f} kg, waiting for the scale to lock"
+    if live is not None:
+        return f"{live.weight_kg:.1f} kg from the scale"
+    return "Looking for a stable scale broadcast"
+
+
+def _store(reading: ScaleReading, ctx: dict[str, object]) -> None:
+    tz = ctx["tz"]
+    assert isinstance(tz, ZoneInfo)
+    mode = str(ctx["mode"])
+    stored = _ingest(reading, datetime.now(tz), replace=(mode == "on"))
+    weight = round(reading.weight_kg, 2)
+    impedance = "" if reading.impedance_ohm is None else f", {reading.impedance_ohm:.0f} ohm"
+    detail = (
+        f"Stored {weight:.1f} kg{impedance}"
+        if stored
+        else "Reading was not stored"
+    )
+    if stored and mode == "on":
+        detail += ". Still listening"
+    _publish(
+        ctx,
         phase="recorded" if stored else "scanning",
-        recorded_today=stored,
-        last_weight_kg=round(reading.weight_kg, 2),
-        detail="Stored today's measurement" if stored else "Reading was not stored",
+        recorded_today=stored or bool(ctx["recorded"]),
+        last_weight_kg=weight,
+        last_error=None,
+        detail=detail,
     )
-    return True
 
 
-def _loop() -> None:
+async def _wait(seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while not _stop.is_set() and time.monotonic() < deadline:
+        await asyncio.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+
+
+def _reading_from_advertisement(device: object, advertisement: object) -> ScaleReading | None:
+    manufacturer = dict(getattr(advertisement, "manufacturer_data", None) or {})
+    service = {
+        str(key): value
+        for key, value in (getattr(advertisement, "service_data", None) or {}).items()
+    }
+    return reading_from_advertisement(
+        getattr(device, "address", None), manufacturer, service
+    )
+
+
+async def _run_cycle(seconds: float, on_reading, stop_when) -> None:  # noqa: ANN001
+    from bleak import BleakScanner
+
+    def on_advertisement(*args: object) -> None:
+        if len(args) < 2:
+            return
+        try:
+            reading = _reading_from_advertisement(args[0], args[1])
+        except Exception:  # noqa: BLE001 — one bad packet should not stop the scan
+            logger.debug("Scale advertisement could not be parsed", exc_info=True)
+            return
+        if reading is not None:
+            try:
+                on_reading(reading)
+            except Exception:  # noqa: BLE001
+                logger.exception("Scale reading was not handled")
+
+    scanner = BleakScanner(detection_callback=on_advertisement)
+    await scanner.start()
+    try:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and not _stop.is_set():
+            if stop_when():
+                break
+            await asyncio.sleep(0.2)
+    finally:
+        try:
+            await scanner.stop()
+        except Exception:  # noqa: BLE001 — stop races with adapter resets
+            logger.debug("Scale scan stop failed", exc_info=True)
+
+
+async def _scan_while_requested() -> None:
+    """Listen until the window closes, the mode changes, or the process stops.
+
+    Discovery restarts every few seconds. That clears the controller's
+    duplicate filter, which otherwise hides the locked weight.
+    """
+    ctx = _listen_context()
+    hold = ReadingHold(settle_seconds=_SETTLE_SECONDS)
+    live: ScaleReading | None = None
+    committed: ScaleReading | None = None
+    saved: ScaleReading | None = None
+    last_publish = 0.0
+
+    def publish(force: bool = False) -> None:
+        nonlocal last_publish
+        now = time.monotonic()
+        if not force and now - last_publish < 1.0:
+            return
+        last_publish = now
+        weight = live.weight_kg if live is not None else None
+        _publish(
+            ctx,
+            phase="scanning",
+            detail=_live_detail(live, hold),
+            last_weight_kg=None if weight is None else round(weight, 2),
+            last_error=None,
+        )
+
+    def on_reading(reading: ScaleReading) -> None:
+        nonlocal live, committed
+        live = reading
+        chosen = hold.offer(reading, time.monotonic())
+        if chosen is not None:
+            committed = chosen
+        publish()
+
+    def stop_when() -> bool:
+        return committed is not None or hold.due(time.monotonic()) or _stop.is_set()
+
+    publish(force=True)
+    while not _stop.is_set():
+        ctx = _listen_context()
+        if not ctx["listening"]:
+            break
+        await _run_cycle(_CYCLE_SECONDS, on_reading, stop_when)
+        chosen = committed
+        if chosen is None and hold.due(time.monotonic()):
+            chosen = hold.take()
+        if chosen is not None and should_replace_reading(
+            None if saved is None else saved.weight_kg,
+            None if saved is None else saved.impedance_ohm,
+            chosen.weight_kg,
+            chosen.impedance_ohm,
+        ):
+            _store(chosen, ctx)
+            saved = chosen
+            hold = ReadingHold(settle_seconds=_SETTLE_SECONDS)
+            committed = None
+            if ctx["mode"] != "on":
+                return
+        elif chosen is not None:
+            hold = ReadingHold(settle_seconds=_SETTLE_SECONDS)
+            committed = None
+        if not _listen_context()["listening"]:
+            break
+        await _wait(_RESTART_PAUSE_SECONDS)
+
+    final = committed or hold.flush()
+    if final is not None and should_replace_reading(
+        None if saved is None else saved.weight_kg,
+        None if saved is None else saved.impedance_ohm,
+        final.weight_kg,
+        final.impedance_ohm,
+    ):
+        _store(final, _listen_context())
+
+
+async def _serve() -> None:
     settings = get_settings()
-    interval = max(15, int(settings.scale_scan_tick_seconds))
     logger.info(
-        "Scale scanner started (tick=%ss, window=%02d:00-%02d:00)",
-        interval,
+        "Scale scanner started (cycle=%ss, window=%02d:00-%02d:00)",
+        _CYCLE_SECONDS,
         settings.scale_listen_start_hour,
         settings.scale_listen_end_hour,
     )
-    _stop.wait(3)
     while not _stop.is_set():
-        listened = False
+        ctx = _listen_context()
+        if not ctx["listening"]:
+            detail = ctx["detail"]
+            if ctx["phase"] == "recorded":
+                with _state_lock:
+                    weight = _state.get("last_weight_kg")
+                if weight is not None:
+                    detail = f"Stored {weight} kg for today"
+            _publish(
+                ctx,
+                phase=ctx["phase"],
+                detail=detail,
+                last_error=None,
+            )
+            await _wait(_IDLE_POLL_SECONDS)
+            continue
         try:
-            listened = _tick()
-        except Exception:  # noqa: BLE001
-            logger.exception("Scale scanner tick failed")
-        # Idle passes stay short so a manual Start is picked up quickly.
-        _stop.wait(interval if listened else 2)
+            await _scan_while_requested()
+        except Exception as exc:  # noqa: BLE001 — adapter missing, BlueZ down, etc.
+            logger.warning("Scale scan unavailable: %s", exc)
+            _publish(ctx, phase="error", last_error=str(exc), detail=str(exc))
+            await _wait(5)
     logger.info("Scale scanner stopped")
+
+
+def _loop() -> None:
+    asyncio.run(_serve())
 
 
 def run_forever() -> None:

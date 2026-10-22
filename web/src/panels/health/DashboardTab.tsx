@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, getApiBase, type HealthProfile, type HealthStats } from '../../api'
+import { api, type HealthProfile, type HealthStats } from '../../api'
 import { errorMessage, pair } from './shared'
 import { TargetsBlock } from './TargetsBlock'
 
@@ -36,9 +36,36 @@ export function DashboardTab() {
     }
   }, [])
 
+  const refreshScale = useCallback(async () => {
+    const scan = await api.scaleStatus().catch(() => null)
+    if (!scan) return
+    setMode(scan.mode || 'auto')
+    setScale(
+      `${scan.mode || 'auto'} · ${scan.window} · ${scan.phase}${scan.detail ? ` — ${scan.detail}` : ''}`,
+    )
+  }, [])
+
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshScale()
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [refreshScale])
+
+  useEffect(() => {
+    if (!scale || !/Stored|recorded/i.test(scale)) return
+    let cancelled = false
+    void api.healthStats().then((next) => {
+      if (!cancelled) setStats(next)
+    }).catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [scale])
 
   async function setScan(action: 'start' | 'stop' | 'auto') {
     setBusy(true)
@@ -54,7 +81,6 @@ export function DashboardTab() {
     }
   }
 
-  const dashUrl = `${getApiBase()}/`
   const latest = stats?.latest
   const nutrition = stats?.nutrition ?? profile?.nutrition
   const meals = profile?.meals_per_day || nutrition?.meals_per_day || 3
@@ -78,9 +104,6 @@ export function DashboardTab() {
         <button type="button" disabled={busy || mode === 'auto'} onClick={() => void setScan('auto')}>
           Use schedule
         </button>
-        <a href={dashUrl} target="_blank" rel="noreferrer">
-          <button type="button">Open Health dashboard</button>
-        </a>
       </div>
       {loading && <p className="muted">Loading…</p>}
       {error && <div className="error-box">{error}</div>}

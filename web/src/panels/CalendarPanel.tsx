@@ -277,6 +277,11 @@ export function CalendarPanel() {
     return events
   }, [list, mode, upcomingOnly])
 
+  const todayInView =
+    list != null &&
+    todayKey >= list.range_start.slice(0, 10) &&
+    todayKey < list.range_end.slice(0, 10)
+
   function openCreate() {
     setEditor('create')
     setDraft(emptyDraft())
@@ -653,7 +658,7 @@ export function CalendarPanel() {
                 const inMonth = day.getMonth() === cursor.getMonth()
                 return (
                   <div
-                    className={`month-cell ${inMonth ? '' : 'outside'}`}
+                    className={`month-cell ${inMonth ? '' : 'outside'} ${key === todayKey ? 'today' : ''}`}
                     key={key}
                     onClick={() => openCreateAt(day, 9)}
                   >
@@ -701,7 +706,7 @@ export function CalendarPanel() {
                   const key = format(day, 'yyyy-MM-dd')
                   const events = (byDay.get(key) ?? []).filter((ev) => ev.all_day)
                   return (
-                    <div key={key}>
+                    <div key={key} className={key === todayKey ? 'today' : undefined}>
                       {events.map((ev) => (
                         <button key={ev.id} type="button" className="raster-event static" style={eventStyle(ev)} onClick={() => openEdit(ev)}>
                           {ev.title}
@@ -727,7 +732,7 @@ export function CalendarPanel() {
                     const key = format(day, 'yyyy-MM-dd')
                     const events = (byDay.get(key) ?? []).filter((ev) => !ev.all_day)
                     return (
-                      <div className="raster-col" key={key}>
+                      <div className={key === todayKey ? 'raster-col today' : 'raster-col'} key={key}>
                         {Array.from({ length: 24 }, (_, hour) => (
                           <button
                             key={hour}
@@ -766,10 +771,28 @@ export function CalendarPanel() {
             </div>
           ) : (
             <>
-              {(visibleEvents.length === 0 && <div className="list-empty">No events in this window.</div>) ||
-                null}
+              {visibleEvents.length === 0 && !todayInView && (
+                <div className="list-empty">No events in this window.</div>
+              )}
+              {todayInView && visibleEvents.every((ev) => eventDayKey(ev) !== todayKey) && (
+                <div className="event-row today">
+                  <div className="when">{format(new Date(), 'EEE d MMM')} · today</div>
+                  <div className="muted">No events</div>
+                </div>
+              )}
               {visibleEvents.map((ev) => (
-                <div className="event-row" key={ev.id} style={eventStyle(ev)}>
+                <div
+                  className={eventDayKey(ev) === todayKey ? 'event-row today' : 'event-row'}
+                  key={ev.id}
+                  style={
+                    eventDayKey(ev) === todayKey
+                      ? {
+                          ...eventStyle(ev),
+                          background: 'color-mix(in srgb, var(--accent) 28%, var(--bg-elevated))',
+                        }
+                      : eventStyle(ev)
+                  }
+                >
                   <div className="card-head">
                     <div>
                       <div className="when">
