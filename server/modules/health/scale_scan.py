@@ -233,13 +233,15 @@ def _listen_context() -> dict[str, object]:
 
 
 def _publish(ctx: dict[str, object], **kwargs: object) -> None:
-    _set_state(
-        enabled=ctx["enabled"],
-        recorded_today=ctx["recorded"],
-        window=ctx["window"],
-        mode=ctx["mode"],
-        **kwargs,
-    )
+    """Publish scanner state. Keyword arguments override the values from ``ctx``."""
+    payload: dict[str, object] = {
+        "enabled": ctx["enabled"],
+        "recorded_today": ctx["recorded"],
+        "window": ctx["window"],
+        "mode": ctx["mode"],
+    }
+    payload.update(kwargs)
+    _set_state(**payload)
 
 
 def _live_detail(live: ScaleReading | None, hold: ReadingHold) -> str:
