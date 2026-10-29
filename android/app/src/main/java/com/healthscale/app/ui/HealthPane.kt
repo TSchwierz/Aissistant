@@ -155,7 +155,7 @@ private fun HealthDashboard(baseUrl: String) {
             Stat("Latest", item.latestKg?.let { "%.1f kg".format(it) } ?: "—")
             Text("7-day average: ${item.avg7?.let { "%.1f kg".format(it) } ?: "—"}")
             Text("Measurements: ${item.count}")
-            Text("BMI: ${item.bmi?.let { "%.1f".format(it) } ?: "—"} · fat ${item.bodyFat?.let { "%.1f%".format(it) } ?: "—"}")
+            Text("BMI: ${item.bmi?.let { "%.1f".format(it) } ?: "—"} · fat ${item.bodyFat?.let { "%.1f%%".format(it) } ?: "—"}")
             Text("Profile: ${item.profileName.ifBlank { "—" }} · ${if (item.profileComplete) "complete" else "incomplete"}")
             if (!item.scalePhase.isNullOrBlank()) {
                 Text("Scale: ${item.scalePhase}${item.scaleDetail?.let { " — $it" } ?: ""}")

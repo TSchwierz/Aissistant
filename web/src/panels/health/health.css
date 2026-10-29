@@ -1,26 +1,39 @@
 .health-scroll {
   overflow-x: auto;
+  max-width: 100%;
 }
 
 .health-head,
 .health-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(7.4rem, 0.9fr) repeat(3, minmax(0, 0.75fr)) auto;
-  gap: 0.5rem;
+  grid-template-columns:
+    minmax(10.5rem, 1.7fr)
+    minmax(7.2rem, 0.9fr)
+    repeat(3, minmax(4.4rem, 0.75fr))
+    10.75rem;
+  column-gap: 0.75rem;
   align-items: center;
+  justify-items: start;
 }
 
 .health-pair {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   line-height: 1.25;
 }
 
 .health-head {
+  border: 1px solid transparent;
   color: var(--text-muted);
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  padding: 0 0.65rem 0.35rem;
+  padding: 0.15rem 0.65rem 0.45rem;
+}
+
+.health-head > span {
+  white-space: nowrap;
 }
 
 .health-row {
@@ -49,6 +62,31 @@
 .health-row-actions {
   display: flex;
   gap: 0.35rem;
+  justify-content: flex-end;
+  width: 100%;
+}
+
+.health-charts {
+  display: grid;
+  gap: 1.35rem;
+  margin-top: 0.35rem;
+  min-width: 0;
+}
+
+.health-chart {
+  min-width: 0;
+}
+
+.health-chart h3 {
+  margin: 0 0 0.15rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.health-chart .chart-wrap {
+  height: 320px;
+  margin-top: 0;
+  min-width: 0;
 }
 
 .health-btn {

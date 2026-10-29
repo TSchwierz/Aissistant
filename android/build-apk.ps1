@@ -170,6 +170,33 @@ try {
 
 $apk = Join-Path $AndroidDir "app\build\outputs\apk\release\app-release.apk"
 if (-not (Test-Path $apk)) { throw "Build finished but the APK was not found." }
+$buildTools = Get-ChildItem (Join-Path $SdkRoot "build-tools") -Directory | Sort-Object Name -Descending | Select-Object -First 1
+if (-not $buildTools) { throw "Android build-tools are not installed." }
+$apkSigner = Join-Path $buildTools.FullName "apksigner.bat"
+# Gradle leaves v1 off when minSdk is 24 or higher. Some phone file
+# managers then fail the install with a package parse error.
+$propsText = Get-Content (Join-Path $KeystoreDir "keystore.properties")
+function Read-KeystoreProp([string]$Name) {
+    $line = $propsText | Where-Object { $_ -like "$Name=*" } | Select-Object -First 1
+    if (-not $line) { throw "keystore.properties is missing $Name" }
+    return $line.Substring($Name.Length + 1)
+}
+$storePassword = Read-KeystoreProp "storePassword"
+$keyPassword = Read-KeystoreProp "keyPassword"
+$keyAlias = Read-KeystoreProp "keyAlias"
+& $apkSigner sign `
+    --ks (Join-Path $KeystoreDir "healthscale.jks") `
+    --ks-pass "pass:$storePassword" `
+    --key-pass "pass:$keyPassword" `
+    --ks-key-alias $keyAlias `
+    --v1-signing-enabled true `
+    --v2-signing-enabled true `
+    --v3-signing-enabled true `
+    --min-sdk-version 26 `
+    $apk
+if ($LASTEXITCODE -ne 0) { throw "apksigner could not sign the APK." }
+& $apkSigner verify --verbose $apk
+if ($LASTEXITCODE -ne 0) { throw "The APK was built but its signature does not verify." }
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 $dest = Join-Path $DistDir "HealthScale.apk"
 Copy-Item $apk $dest -Force

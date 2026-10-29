@@ -22,8 +22,8 @@ android {
         applicationId = "com.healthscale.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.1.0"
+        versionCode = 4
+        versionName = "1.1.1"
     }
 
     signingConfigs {
@@ -33,6 +33,11 @@ android {
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
+                // v1 as well as v2: a file manager that only understands JAR
+                // signatures otherwise reports a package parse error.
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
@@ -61,9 +66,19 @@ android {
         compose = true
     }
     packaging {
+        jniLibs {
+            // ML Kit and CameraX ship .so files. Leaving them uncompressed
+            // pads each one to a 16 KB zip boundary, and some phone package
+            // installers then fail with "There was a problem parsing the package."
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+    }
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 }
 
