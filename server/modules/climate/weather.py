@@ -604,7 +604,7 @@ class WeatherService:
         latitude: float,
         longitude: float,
         openweathermap_api_key: str = "",
-        forecast_hours: int = 12,
+        forecast_hours: int = 24,
         request_timeout_seconds: float = 10.0,
         alert_max_age_minutes: int = 30,
     ) -> None:

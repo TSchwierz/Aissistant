@@ -380,6 +380,7 @@
 .raster-col {
   position: relative;
   border-left: 1px solid var(--border);
+  touch-action: none;
 }
 
 .raster-slot {
@@ -389,6 +390,7 @@
   border: 0;
   border-top: 1px solid var(--border);
   background: transparent;
+  touch-action: none;
 }
 
 .raster-event {
@@ -405,6 +407,7 @@
   border: 1px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 28%, transparent);
   color: inherit;
+  touch-action: none;
 }
 
 .raster-event.static {
@@ -412,6 +415,17 @@
   display: block;
   width: 100%;
   margin-bottom: 2px;
+}
+
+.raster-preview {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: 4px;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .month-cell .daynum {
@@ -447,6 +461,17 @@ button.linkish {
 .chart-wrap {
   height: 260px;
   margin-top: 0.5rem;
+}
+
+.forecast-hours {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.85rem;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
 }
 
 .error-box {

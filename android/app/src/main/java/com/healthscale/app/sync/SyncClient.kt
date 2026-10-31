@@ -4,6 +4,8 @@ import com.healthscale.app.data.PendingMeasurement
 import com.healthscale.app.data.PendingMeasurementDao
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.healthscale.app.api.apiHttpClient
+import com.healthscale.app.api.withApiKey
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -11,19 +13,18 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
-import java.util.concurrent.TimeUnit
 
 class SyncClient(
     private val dao: PendingMeasurementDao,
-    private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build(),
+    http: OkHttpClient = apiHttpClient(readSeconds = 15),
 ) {
+    private val http: OkHttpClient = http.withApiKey()
+
     suspend fun testConnection(baseUrl: String): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val req = Request.Builder().url("${baseUrl.trimEnd('/')}/api/health").get().build()
             http.newCall(req).execute().use { resp ->
+                if (resp.code == 401) error("API key rejected")
                 if (!resp.isSuccessful) error("HTTP ${resp.code}")
                 resp.body?.string() ?: "ok"
             }
@@ -44,6 +45,7 @@ class SyncClient(
                 .build()
 
             http.newCall(req).execute().use { resp ->
+                if (resp.code == 401) error("API key rejected")
                 if (!resp.isSuccessful) {
                     error("HTTP ${resp.code}: ${resp.body?.string()}")
                 }

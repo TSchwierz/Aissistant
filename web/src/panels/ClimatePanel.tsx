@@ -18,10 +18,11 @@ import {
 } from '../api'
 import { getApiBase } from '../api'
 import { themeChartColors } from '../theme'
+import { ForecastTab } from './climate/ForecastTab'
 
 ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Tooltip, Legend)
 
-type ClimateSection = 'now' | 'history' | 'outside' | 'settings'
+type ClimateSection = 'now' | 'history' | 'outside' | 'forecast' | 'settings'
 type HistoryRange = '12h' | '24h' | '7d' | '30d'
 
 const HISTORY_RANGES: { id: HistoryRange; label: string; hours: number }[] = [
@@ -78,6 +79,7 @@ export function ClimatePanel() {
   const [formError, setFormError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [forecastReload, setForecastReload] = useState(0)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -91,6 +93,7 @@ export function ClimatePanel() {
       setCurrent(cur)
       setOutside(out)
       setSettings(cfg)
+      setForecastReload((value) => value + 1)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -243,6 +246,13 @@ export function ClimatePanel() {
             </button>
             <button
               type="button"
+              className={section === 'forecast' ? 'active' : undefined}
+              onClick={() => setSection('forecast')}
+            >
+              Forecast
+            </button>
+            <button
+              type="button"
               className={section === 'settings' ? 'active' : undefined}
               onClick={() => setSection('settings')}
             >
@@ -350,6 +360,7 @@ export function ClimatePanel() {
               {formError && <div className="error-box">{formError}</div>}
             </>
           )}
+          {section === 'forecast' && <ForecastTab reloadToken={forecastReload} />}
           {section === 'settings' && settings && (
             <form className="topic-form" onSubmit={(event) => void saveSettings(event)}>
               <h3>Bands and sample interval</h3>

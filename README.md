@@ -11,7 +11,7 @@ On the Pi, `start-server.sh` runs four processes and restarts whichever one exit
 | API | **8741** — health under `/api/...`, climate under `/climate/...`, plus calendar, news, briefing, and backup |
 | PC web UI (Vite) | **8742** |
 
-Default bind is `127.0.0.1:8741`. The Pi boot script listens on `0.0.0.0:8741`. There is no login. Do not expose **8741** on the router.
+Default bind is `127.0.0.1:8741`. The Pi boot script listens on `0.0.0.0:8741`. Every request needs `PA_API_KEY`. Do not expose **8741** on the router.
 
 The old Health Scale Hub (`:8000`) and Studio Climate (`:8787`) are this process now. `GET /` still serves the old health HTML page. The PC and phone apps use their own Health screens instead.
 
@@ -49,9 +49,10 @@ Prefix is `PA_`. A `.env` file in the repo root is read as well.
 | `PA_EMBED_WORKERS` | `true` | `false` under the supervisor, so workers are separate processes |
 | `PA_CLIMATE_MOCK_SENSOR` | climate config | Optional override. Mock is the PC-friendly default |
 | `PA_NEWS_SCHEDULER_ENABLED` | `true` | |
+| `PA_API_KEY` | *(none)* | Required. The process refuses to start when this is empty |
 | `PA_SCALE_SCAN_ENABLED` | `true` | `false` turns the morning listen off. Manual Start still scans |
-| `PA_SCALE_LISTEN_START_HOUR` | `6` | Inclusive, local time |
-| `PA_SCALE_LISTEN_END_HOUR` | `12` | Exclusive, local time |
+| `PA_SCALE_LISTEN_START_HOUR` | `8` | Inclusive, local time. Used only until `scale_window.json` exists |
+| `PA_SCALE_LISTEN_END_HOUR` | `10` | Exclusive, local time. Used only until `scale_window.json` exists |
 
 `PA_DATA_DIR` defaults to `~/.local/share/personal-aissistent` on Linux and `%LOCALAPPDATA%\PersonalAissistent` on Windows. The first start copies any `health.db`, `climate.db`, `calendar.db`, `news.db`, scale JSON, or `advisor/` files still sitting in `./data`. A later `git pull` does not wipe them.
 
@@ -59,7 +60,7 @@ Prefix is `PA_`. A `.env` file in the repo root is read as well.
 
 The Pi listens for the scale. The phone does not measure.
 
-From **06:00–12:00** local time it listens until a measurement for that calendar day is stored, then it stops. **Start scan** in the Health screen listens immediately, including outside that window and after today's reading exists, until **Stop scan**. **Use schedule** returns to the morning window. `GET /api/scale` reports the phase. `POST /api/scale/mode` takes `{"action":"start"|"stop"|"auto"}`.
+The default listen window is **08:00–10:00** local time (start inclusive, end exclusive). Settings on the web and the phone change it; the Pi stores the hours in `scale_window.json` next to `scale_mode.json`. The scanner still stops once a measurement for that calendar day is stored. **Start scan** listens immediately, including outside the window and after today's reading exists, until **Stop scan**. **Use schedule** returns to the saved window. `GET /api/scale` reports `start_hour`, `end_hour`, `window`, and the phase. `POST /api/scale/window` takes `{"start_hour":8,"end_hour":10}`. `POST /api/scale/mode` takes `{"action":"start"|"stop"|"auto"}`.
 
 The scale repeats its broadcast while someone is standing on it, and the Pi's Bluetooth controller drops later packets from the same device. The scanner restarts discovery every few seconds so the locked weight, and a follow-up impedance reading, can get through. A locked weight with impedance is stored at once. A lock without impedance is held a few seconds in case body composition arrives.
 
@@ -88,22 +89,22 @@ Outside air comes from Open-Meteo, Bright Sky (DWD), and OpenWeatherMap. OpenWea
 cd web && npm install && npm run dev   # http://127.0.0.1:8742
 ```
 
-A left sidebar holds Morning brief, Calendar, Climate, Health, News, and Settings. On a narrow screen the sidebar is behind **Menu**. Settings stores the Pi URL (default `http://192.168.178.23:8741`), tests `GET /health`, downloads a backup, and sets the theme (system / dark / light, and teal / blue / amber / rose). Override the default URL with `VITE_PI_API_BASE` set to the server origin, for example `http://192.168.178.23:8741` — not `/climate`.
+A left sidebar holds Morning brief, Calendar, Climate, Health, News, and Settings. On a narrow screen the sidebar is behind **Menu**. Settings stores the Pi URL (default `http://192.168.178.23:8741`), the API key, the scale listen hours, a connection test, a backup download, and the theme (system / dark / light, and teal / blue / amber / rose). The key stays in this browser and is sent as `Authorization: Bearer`. Override the default URL with `VITE_PI_API_BASE` set to the server origin, for example `http://192.168.178.23:8741` — not `/climate`.
 
 | Section | What it does |
 | --- | --- |
 | Morning brief | Today's script and sections |
-| Calendar | Week, two weeks, month, and a simplified list. Tags and tag colours. Create, edit, delete. Events can repeat weekly, every two weeks, or monthly, with an optional end date |
-| Climate | Current indoor reading and ventilation advice. History for 12 hours, 24 hours, 7 days, or 30 days. Outside providers. Temperature and humidity bands, and the sample interval |
+| Calendar | Week, two weeks, month, and a simplified list. Tags and tag colours. Create, edit, delete. On the week and fortnight grids, drag a range to prefill the form, or drag a non-repeating event to move it. One optional reminder, in minutes or hours. Import an `.ics` file, a Google Calendar `.zip`, or an Outlook CSV. Events can repeat weekly, every two weeks, or monthly, with an optional end date |
+| Climate | Current indoor reading and ventilation advice. The 4-hour outside summary stays on the dashboard. A Forecast tab charts the next 24 stored hours. History for 12 hours, 24 hours, 7 days, or 30 days. Outside providers. Temperature and humidity bands, and the sample interval |
 | Health | Scale listener (start, stop, schedule), latest weight and body composition, charts, measurements, meals and calories, profile and targets |
 | News | Topics and the latest digests |
-| Settings | Pi URL, connection test, backup download, theme |
+| Settings | Pi URL, API key, scale listen window, connection test, backup download, theme |
 
 The Vite app lives in [`web/`](web/).
 
 ## Android
 
-Package `com.healthscale.app`. The drawer matches the PC: Brief, Calendar, Climate, Health, News, Settings. The scale is read by the Pi. Health includes the scale controls, measurements, meals (including a camera for a barcode or a photo), and profile. Climate history has the same ranges as the PC. Calendar editing matches the PC. Settings stores the Pi URL, theme, and backup download.
+Package `com.healthscale.app`. The drawer matches the PC: Brief, Calendar, Climate, Health, News, Settings. The scale is read by the Pi. Health includes the scale controls, measurements, meals (including a camera for a barcode or a photo), and profile. Climate has the same history ranges as the PC, plus the 24-hour Forecast tab. Calendar editing matches the PC, including file import and one reminder per event. The phone keeps events that overlap today through the next 7 days in the Pi timezone and shows that copy when the server cannot be reached. Creates, edits, and deletes still need the server. Reminders in that window are scheduled as Android notifications and fire while the app is closed. Settings stores the Pi URL, the API key, the scale listen window, theme, and backup download.
 
 Morning brief is still the Modes & Routines entry. See [`android/README.md`](android/README.md).
 
@@ -118,17 +119,15 @@ Build on a machine with JDK 17 and the Android SDK (`android/build-apk.bat` or G
 
 ### Phone away from home
 
-Do not open port **8741** on the router. Use a VPN so the phone joins the home network, then keep the same server URL.
+Do not open port **8741** on the router. Tailscale is how the phone reaches the Pi from outside the house. The app does not contain a VPN. Install Tailscale on the Pi and on the phone, and sign both into the same tailnet. The URL stays `http://` because WireGuard encrypts the tunnel. The API key is still required.
 
 On this LAN the Pi is `192.168.178.23`. Confirm it with `ping -4 raspberrypi.fritz.box` from the PC, or `hostname -I` on the Pi. At home the phone setting is `http://192.168.178.23:8741`.
 
-**Tailscale** (stays connected on mobile data):
+Away from home:
 
-1. Install Tailscale on the Pi and on the phone. Sign both in to the same account.
-2. On the Pi, `tailscale ip -4` prints the overlay address (`100.x.x.x`).
-3. In the phone app, set the Pi server URL to `http://100.x.x.x:8741`.
-
-**Fritz!Box WireGuard** (turn the VPN on when you want the app): after the phone connects to the Fritz VPN, `http://192.168.178.23:8741` works as if the phone were at home.
+1. On the Pi, `tailscale ip -4` prints the overlay address (`100.x.x.x`).
+2. In the phone app, set the Pi server URL to `http://100.x.x.x:8741`.
+3. Set the same `PA_API_KEY` the Pi was started with.
 
 ## Key routes
 
@@ -137,7 +136,7 @@ On this LAN the Pi is `192.168.178.23`. Confirm it with `ping -4 raspberrypi.fri
 | Method | Path |
 | --- | --- |
 | `GET` | `/health` — process liveness |
-| `GET` | `/briefing/morning` — English `script` + `sections[]`; skip missing parts; `?refresh=1` busts the 15‑min cache |
+| `GET` | `/briefing/morning` — today's brief is the file `morning_brief.json` in `PA_DATA_DIR`. The news scheduler writes it at 04:00 local time and again after a digest for today. `?refresh=1` composes a new copy. Any other `date` is composed and not saved |
 | `GET` | `/briefing/morning/latest` — alias for today |
 | `GET` | `/docs` |
 
@@ -177,11 +176,16 @@ Schedules use `PA_TIMEZONE`. Digests live in `news.db`. Feed URLs are `https://�
 
 ### Calendar
 
-Windows use `PA_TIMEZONE`. No Microsoft 365 import. Repeating events are `weekly`, `biweekly`, or `monthly`, with optional `repeat_until` and `repeat_weekdays` (0 = Monday). Editing or deleting a series changes the series. Tag colours are `PUT /calendar/tags`.
+Windows use `PA_TIMEZONE`. Repeating events are `weekly`, `biweekly`, or `monthly`, with optional `repeat_until` and `repeat_weekdays` (0 = Monday). Editing or deleting a series changes the series. Tag colours are `PUT /calendar/tags`.
+
+`POST /calendar/import` accepts a multipart file named `file`: one `.ics`, a `.zip` of `.ics` files (a Google Calendar export), or an Outlook CSV. A repeat is stored only when it is weekly, every two weeks, or monthly. Anything else is one event, and the response lists it under `repeat_dropped`. The same ICS `UID` updates that event on a later import. A CSV row updates an event with the same title, start, and end.
+
+`remind_before_minutes` is `null` or an integer from 1 to 10080. The web notifies with the browser Notification API only while a page is open. The phone schedules its own notifications from the stored 7-day window.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| `POST` | `/calendar/events` | Create |
+| `POST` | `/calendar/import` | Multipart `file`: `.ics`, `.zip` of `.ics`, or Outlook CSV |
+| `POST` | `/calendar/events` | Create. Optional `remind_before_minutes` |
 | `GET` | `/calendar/events/{id}` | Read one |
 | `PUT` | `/calendar/events/{id}` | Update (`clear_end`, `clear_location`, `clear_notes`, `clear_repeat`) |
 | `DELETE` | `/calendar/events/{id}` | Delete |
@@ -198,7 +202,8 @@ Windows use `PA_TIMEZONE`. No Microsoft 365 import. Repeating events are `weekly
 | `GET` | `/api/health` |
 | `GET`/`PUT` | `/api/profile` |
 | `GET` | `/api/stats` |
-| `GET` | `/api/scale` |
+| `GET` | `/api/scale` — includes `start_hour`, `end_hour`, and `window` |
+| `POST` | `/api/scale/window` — `{"start_hour","end_hour"}` |
 | `POST` | `/api/scale/mode` — `start`, `stop`, or `auto` |
 | `POST`/`GET` | `/api/measurements` |
 | `PUT`/`DELETE` | `/api/measurements/{id}` |
@@ -216,7 +221,9 @@ Routes are under `/climate`. History accepts `from`, `to`, and `limit`. When a l
 | --- | --- |
 | `GET` | `/climate/health`, `/climate/current` |
 | `GET` | `/climate/measurements`, `/climate/stats`, `/climate/rolling-average` |
-| `GET` | `/climate/outside`, `/climate/outside/measurements` |
+| `GET` | `/climate/outside` — current reading and the 4-hour summary |
+| `GET` | `/climate/outside/hourly` — next 24 stored hours, gaps left empty |
+| `GET` | `/climate/outside/measurements` |
 | `POST` | `/climate/outside/refresh` |
 | `GET`/`PUT` | `/climate/settings` |
 | `GET` | `/climate/incidents`, `/climate/incidents/tags` |
@@ -226,19 +233,24 @@ Routes are under `/climate`. History accepts `from`, `to`, and `limit`. When a l
 
 Advisor notes are markdown under `PA_DATA_DIR/advisor/`. There is no advisor chat in the web or phone UI.
 
+Send the key on every call. A missing or wrong key is `401`. A query-string key is ignored.
+
 ```bash
-curl -s http://127.0.0.1:8741/health
-curl -s http://127.0.0.1:8741/api/scale
-curl -s http://127.0.0.1:8741/climate/current
-curl -s "http://127.0.0.1:8741/climate/measurements?from=2026-10-20T00:00:00Z&limit=5000"
+curl -s http://127.0.0.1:8741/health -H "Authorization: Bearer $PA_API_KEY"
+curl -s http://127.0.0.1:8741/api/scale -H "Authorization: Bearer $PA_API_KEY"
+curl -s http://127.0.0.1:8741/climate/current -H "Authorization: Bearer $PA_API_KEY"
+curl -s http://127.0.0.1:8741/climate/outside/hourly -H "Authorization: Bearer $PA_API_KEY"
+curl -s "http://127.0.0.1:8741/climate/measurements?from=2026-10-20T00:00:00Z&limit=5000" \
+  -H "Authorization: Bearer $PA_API_KEY"
 
 curl -s -X POST http://127.0.0.1:8741/calendar/events \
+  -H "Authorization: Bearer $PA_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"title":"Dentist","start":"2026-10-15T10:30:00+02:00","end":"2026-10-15T11:00:00+02:00","tags":["health"]}'
-curl -s "http://127.0.0.1:8741/calendar/weeks?days=7"
+  -d '{"title":"Dentist","start":"2026-10-15T10:30:00+02:00","end":"2026-10-15T11:00:00+02:00","tags":["health"],"remind_before_minutes":60}'
+curl -s "http://127.0.0.1:8741/calendar/weeks?days=7" -H "Authorization: Bearer $PA_API_KEY"
 
-curl -s http://127.0.0.1:8741/news/status
-curl -s "http://127.0.0.1:8741/briefing/morning"
+curl -s http://127.0.0.1:8741/news/status -H "Authorization: Bearer $PA_API_KEY"
+curl -s "http://127.0.0.1:8741/briefing/morning" -H "Authorization: Bearer $PA_API_KEY"
 ```
 
 ## Package layout

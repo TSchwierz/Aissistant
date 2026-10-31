@@ -11,12 +11,17 @@ private val Context.dataStore by preferencesDataStore("settings")
 
 class SettingsRepository(private val context: Context) {
     private val serverUrlKey = stringPreferencesKey("server_url")
+    private val apiKeyKey = stringPreferencesKey("api_key")
     private val themeModeKey = stringPreferencesKey("theme_mode")
     private val themeAccentKey = stringPreferencesKey("theme_accent")
 
     val serverUrl: Flow<String> = context.dataStore.data.map { prefs ->
         // Unified Personal AIssistent Pi process (was Health hub :8000).
         prefs[serverUrlKey] ?: "http://192.168.178.23:8741"
+    }
+
+    val apiKey: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[apiKeyKey] ?: ""
     }
 
     val themeMode: Flow<String> = context.dataStore.data.map { prefs ->
@@ -29,6 +34,12 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setServerUrl(url: String) {
         context.dataStore.edit { it[serverUrlKey] = url.trim().trimEnd('/') }
+    }
+
+    suspend fun setApiKey(key: String) {
+        val trimmed = key.trim()
+        ApiKeyStore.apiKey = trimmed
+        context.dataStore.edit { it[apiKeyKey] = trimmed }
     }
 
     suspend fun setThemeMode(mode: String) {

@@ -2,11 +2,12 @@ package com.healthscale.app.brief
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.healthscale.app.api.apiHttpClient
+import com.healthscale.app.api.withApiKey
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 data class BriefSection(
     val id: String,
@@ -25,11 +26,10 @@ data class MorningBrief(
 )
 
 class BriefClient(
-    private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .build(),
+    http: OkHttpClient = apiHttpClient(),
 ) {
+    private val http: OkHttpClient = http.withApiKey()
+
     suspend fun fetchMorningBrief(
         baseUrl: String,
         date: String? = null,
@@ -49,6 +49,7 @@ class BriefClient(
                 .build()
             http.newCall(req).execute().use { resp ->
                 val body = resp.body?.string().orEmpty()
+                if (resp.code == 401) error("API key rejected")
                 if (!resp.isSuccessful) error("HTTP ${resp.code}: $body")
                 parse(body)
             }

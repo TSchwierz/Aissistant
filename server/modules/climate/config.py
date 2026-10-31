@@ -18,7 +18,6 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "config.climate.toml"
 class AppConfig:
     host: str
     port: int
-    api_token: str
     db_path: Path
     sample_interval_seconds: int
     gpio_pin: int
@@ -102,7 +101,6 @@ def load_config(path: Path | None = None) -> AppConfig:
     return AppConfig(
         host=str(server.get("host", settings.host)),
         port=int(server.get("port", settings.port)),
-        api_token=str(server.get("api_token", "")),
         db_path=db_path,
         sample_interval_seconds=int(collector.get("sample_interval_seconds", 60)),
         gpio_pin=int(collector.get("gpio_pin", 23)),
@@ -129,7 +127,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         longitude=float(weather.get("longitude", 6.7735)),
         weather_poll_interval_minutes=max(5, int(weather.get("poll_interval_minutes", 60))),
         weather_alert_max_age_minutes=max(1, int(weather.get("alert_max_age_minutes", 30))),
-        weather_forecast_hours=max(4, min(int(weather.get("forecast_hours", 12)), 24)),
+        weather_forecast_hours=max(4, min(int(weather.get("forecast_hours", 24)), 24)),
         weather_request_timeout_seconds=float(weather.get("request_timeout_seconds", 10)),
         openweathermap_api_key=str(weather.get("openweathermap_api_key", "")),
         advisor_path=advisor_path,

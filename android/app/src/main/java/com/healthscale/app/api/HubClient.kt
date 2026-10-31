@@ -30,6 +30,7 @@ data class CalEvent(
     val location: String?,
     val notes: String?,
     val tags: List<String>,
+    val remindBeforeMinutes: Int? = null,
 )
 
 data class CalList(
@@ -37,6 +38,25 @@ data class CalList(
     val rangeStart: String,
     val rangeEnd: String,
     val events: List<CalEvent>,
+    val timezone: String = "",
+)
+
+data class CalPayload(
+    val list: CalList,
+    val rawJson: String,
+)
+
+data class CalImportIssue(
+    val title: String,
+    val detail: String,
+)
+
+data class CalImport(
+    val created: Int,
+    val updated: Int,
+    val skipped: Int,
+    val repeatDropped: List<CalImportIssue>,
+    val alarmDropped: List<CalImportIssue>,
 )
 
 data class CalDraft(
@@ -48,6 +68,7 @@ data class CalDraft(
     val notes: String?,
     val tags: List<String>,
     val editing: Boolean,
+    val remindBeforeMinutes: Int? = null,
 )
 
 data class HealthSnapshot(
@@ -199,11 +220,10 @@ data class FoodHit(
 )
 
 class HubClient(
-    private val http: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .build(),
+    http: OkHttpClient = apiHttpClient(),
 ) {
+    private val http: OkHttpClient = http.withApiKey()
+
     suspend fun morningBrief(baseUrl: String): MorningBrief = io {
         val root = jsonObject(baseUrl, "/briefing/morning")
         val meta = root.optJSONObject("meta") ?: JSONObject()
@@ -243,6 +263,40 @@ class HubClient(
         jsonObject(baseUrl, "/calendar/tags").optJSONArray("tags").strings()
     }
 
+    /** Next 7 days from today in the server timezone. This is the offline window. */
+    suspend fun calendarWindow(baseUrl: String): CalPayload = io {
+        val raw = send(baseUrl, "GET", "/calendar/weeks?days=7", null)
+        CalPayload(parseCalendarList(JSONObject(raw)), raw)
+    }
+
+    suspend fun importCalendar(baseUrl: String, filename: String, bytes: ByteArray): CalImport = io {
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                "file",
+                filename.ifBlank { "calendar.ics" },
+                bytes.toRequestBody("application/octet-stream".toMediaType()),
+            )
+            .build()
+        val request = Request.Builder()
+            .url(baseUrl.trim().trimEnd('/') + "/calendar/import")
+            .post(body)
+            .build()
+        val text = http.newCall(request).execute().use { resp ->
+            val raw = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) fail(resp.code, raw)
+            raw
+        }
+        val root = JSONObject(text)
+        CalImport(
+            created = root.optInt("created"),
+            updated = root.optInt("updated"),
+            skipped = root.optInt("skipped"),
+            repeatDropped = root.optJSONArray("repeat_dropped").objects { importIssue(it) },
+            alarmDropped = root.optJSONArray("alarm_dropped").objects { importIssue(it) },
+        )
+    }
+
     suspend fun saveEvent(baseUrl: String, id: String?, draft: CalDraft) = io {
         val body = JSONObject()
             .put("title", draft.title)
@@ -252,6 +306,12 @@ class HubClient(
         putOptional(body, "end", draft.end, draft.editing, "clear_end")
         putOptional(body, "location", draft.location, draft.editing, "clear_location")
         putOptional(body, "notes", draft.notes, draft.editing, "clear_notes")
+        if (draft.remindBeforeMinutes == null) {
+            body.put("remind_before_minutes", JSONObject.NULL)
+            if (draft.editing) body.put("clear_remind", true)
+        } else {
+            body.put("remind_before_minutes", draft.remindBeforeMinutes)
+        }
         val path = if (id.isNullOrBlank()) "/calendar/events" else "/calendar/events/${encode(id)}"
         send(baseUrl, if (id.isNullOrBlank()) "POST" else "PUT", path, body.toString())
     }
@@ -515,22 +575,11 @@ class HubClient(
         foodFrom(jsonObject(baseUrl, "/api/foods/barcode/${encode(code)}"))
     }
 
-    private fun parseCalendar(root: JSONObject) = CalList(
-        count = root.optInt("count"),
-        rangeStart = root.optString("range_start"),
-        rangeEnd = root.optString("range_end"),
-        events = root.optJSONArray("events").objects { eventFrom(it) },
-    )
+    private fun parseCalendar(root: JSONObject) = parseCalendarList(root)
 
-    private fun eventFrom(obj: JSONObject) = CalEvent(
-        id = obj.optString("id"),
-        title = obj.optString("title"),
-        start = obj.optString("start"),
-        end = obj.optString("end").ifBlank { null },
-        allDay = obj.optBoolean("all_day"),
-        location = obj.optString("location").ifBlank { null },
-        notes = obj.optString("notes").ifBlank { null },
-        tags = obj.optJSONArray("tags").strings(),
+    private fun importIssue(obj: JSONObject) = CalImportIssue(
+        title = obj.optString("title").ifBlank { "Event" },
+        detail = obj.optString("detail"),
     )
 
     private fun putOptional(
@@ -577,6 +626,7 @@ class HubClient(
         }
 
     private fun fail(code: Int, body: String): Nothing {
+        if (code == 401) error("API key rejected")
         val detail = runCatching { JSONObject(body).opt("detail") }.getOrNull()
         val message = when (detail) {
             is String -> detail
@@ -706,6 +756,30 @@ class HubClient(
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     }
 }
+
+fun parseCalendarList(root: JSONObject) = CalList(
+    count = root.optInt("count"),
+    rangeStart = root.optString("range_start"),
+    rangeEnd = root.optString("range_end"),
+    timezone = root.optString("timezone"),
+    events = root.optJSONArray("events").objects { eventFrom(it) },
+)
+
+private fun eventFrom(obj: JSONObject) = CalEvent(
+    id = obj.optString("id"),
+    title = obj.optString("title"),
+    start = obj.optString("start"),
+    end = obj.optString("end").ifBlank { null },
+    allDay = obj.optBoolean("all_day"),
+    location = obj.optString("location").ifBlank { null },
+    notes = obj.optString("notes").ifBlank { null },
+    tags = obj.optJSONArray("tags").strings(),
+    remindBeforeMinutes = if (!obj.has("remind_before_minutes") || obj.isNull("remind_before_minutes")) {
+        null
+    } else {
+        obj.optInt("remind_before_minutes")
+    },
+)
 
 private inline fun <T> JSONArray?.objects(block: (JSONObject) -> T): List<T> {
     if (this == null) return emptyList()

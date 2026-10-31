@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from server import __version__
+from server.auth import install_api_key_middleware, require_api_key
 from server.config import get_settings
 from server.modules.calendar import router as calendar_router
 from server.modules.calendar import startup_calendar
@@ -47,6 +48,7 @@ async def lifespan(_app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    require_api_key()
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
@@ -54,12 +56,15 @@ def create_app() -> FastAPI:
         description=(
             "Pi SSOT for Personal AIssistent "
             "(Health + Studio Climate + calendar + news + morning brief + backup). "
-            "Trusted home LAN only — auth TBD; do not expose publicly. "
+            "Every route requires PA_API_KEY "
+            "(Authorization: Bearer or X-API-Token). "
+            "Do not expose publicly. "
             "Former Health :8000 and Climate :8787 → this process :8741 "
             "(climate routes under /climate). AI keys on Pi only."
         ),
         lifespan=lifespan,
     )
+    install_api_key_middleware(app)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_LAN_WEB_ORIGINS,

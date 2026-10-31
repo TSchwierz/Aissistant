@@ -22,6 +22,33 @@ from server.modules.news.providers import configured_providers, summarize_digest
 
 logger = logging.getLogger(__name__)
 
+# Digests the morning brief actually shows. Error rows are stored but excluded
+# from the brief, so they must not force a rebuild.
+_BRIEF_REFRESH_STATUSES = frozenset({"ok", "skipped_summarize"})
+
+
+def _refresh_morning_brief_after_digest(for_date: str, status: str) -> None:
+    """Replace today's stored brief after a digest for the local today.
+
+    A digest for any other date is ignored. A rebuild failure is logged and
+    does not fail the digest job.
+    """
+    if status not in _BRIEF_REFRESH_STATUSES:
+        return
+    try:
+        settings = get_settings()
+        today = datetime.now(ZoneInfo(settings.timezone)).date().isoformat()
+        if for_date != today:
+            return
+        from server.modules.briefing.store import refresh_stored_morning_brief
+
+        refresh_stored_morning_brief()
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Morning brief rebuild after news digest failed (for_date=%s)",
+            for_date,
+        )
+
 
 def run_topic_job(
     topic: TopicRow,
@@ -86,6 +113,7 @@ def run_topic_job(
         )
         db.insert_digest(digest)
         db.mark_topic_run(topic.id, status="skipped_summarize", when=generated_at)
+        _refresh_morning_brief_after_digest(for_date, digest.status)
         return digest
 
     block = items_to_prompt_block(items)
@@ -143,6 +171,7 @@ def run_topic_job(
         result.provider,
         item_count,
     )
+    _refresh_morning_brief_after_digest(for_date, digest.status)
     return digest
 
 

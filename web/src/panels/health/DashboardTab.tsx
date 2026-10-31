@@ -3,10 +3,18 @@ import { api, type HealthProfile, type HealthStats } from '../../api'
 import { errorMessage, pair } from './shared'
 import { TargetsBlock } from './TargetsBlock'
 
+function spokenWindow(windowLabel: string | null): string | null {
+  if (!windowLabel) return null
+  const parts = windowLabel.split('-')
+  if (parts.length === 2 && parts[0] && parts[1]) return `${parts[0]} to ${parts[1]}`
+  return windowLabel
+}
+
 export function DashboardTab() {
   const [stats, setStats] = useState<HealthStats | null>(null)
   const [profile, setProfile] = useState<HealthProfile | null>(null)
   const [scale, setScale] = useState<string | null>(null)
+  const [listenWindow, setListenWindow] = useState<string | null>(null)
   const [mode, setMode] = useState('auto')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -24,6 +32,7 @@ export function DashboardTab() {
       setStats(s)
       setProfile(p)
       setMode(scan?.mode || 'auto')
+      setListenWindow(scan ? scan.window : null)
       setScale(
         scan
           ? `${scan.mode || 'auto'} · ${scan.window} · ${scan.phase}${scan.detail ? ` — ${scan.detail}` : ''}`
@@ -40,6 +49,7 @@ export function DashboardTab() {
     const scan = await api.scaleStatus().catch(() => null)
     if (!scan) return
     setMode(scan.mode || 'auto')
+    setListenWindow(scan.window)
     setScale(
       `${scan.mode || 'auto'} · ${scan.window} · ${scan.phase}${scan.detail ? ` — ${scan.detail}` : ''}`,
     )
@@ -84,12 +94,14 @@ export function DashboardTab() {
   const latest = stats?.latest
   const nutrition = stats?.nutrition ?? profile?.nutrition
   const meals = profile?.meals_per_day || nutrition?.meals_per_day || 3
+  const listenRange = spokenWindow(listenWindow)
 
   return (
     <>
       <p className="lede">
-        The Pi records the scale over Bluetooth from 06:00 to 12:00, then stops once today&apos;s
-        measurement is stored. Height, age, and sex stay on the health dashboard.
+        The Pi records the scale over Bluetooth{' '}
+        {listenRange ? `from ${listenRange}` : 'during the saved morning window'}, then stops once
+        today&apos;s measurement is stored. Height, age, and sex stay on the health dashboard.
       </p>
       <div className="panel-actions">
         <button type="button" className="primary" onClick={() => void load()}>

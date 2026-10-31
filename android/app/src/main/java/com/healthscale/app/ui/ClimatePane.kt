@@ -31,14 +31,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.healthscale.app.api.ClimateOutside
 import com.healthscale.app.api.ClimatePoint
 import com.healthscale.app.api.ClimateReading
+import com.healthscale.app.api.ForecastClient
+import com.healthscale.app.api.HourlyForecast
+import com.healthscale.app.api.HourlyForecastPoint
 import com.healthscale.app.api.HubClient
 import kotlinx.coroutines.launch
 import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import kotlin.math.roundToInt
 
 private val historyRanges = listOf(
@@ -51,7 +58,7 @@ private val historyRanges = listOf(
 @Composable
 fun ClimatePane(baseUrl: String) {
     var tab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Now", "History", "Outside", "Settings")
+    val tabs = listOf("Now", "History", "Outside", "Forecast", "Settings")
     Column(Modifier.fillMaxSize()) {
         ScrollableTabRow(selectedTabIndex = tab) {
             tabs.forEachIndexed { index, label ->
@@ -67,6 +74,7 @@ fun ClimatePane(baseUrl: String) {
                 0 -> ClimateNow(baseUrl)
                 1 -> ClimateHistory(baseUrl)
                 2 -> ClimateOutsideTab(baseUrl)
+                3 -> ClimateForecastTab(baseUrl)
                 else -> ClimateSettingsTab(baseUrl)
             }
         }
@@ -229,6 +237,168 @@ private fun ClimateOutsideTab(baseUrl: String) {
             }
         }
     }
+}
+
+@Composable
+private fun ClimateForecastTab(baseUrl: String) {
+    val client = remember { ForecastClient() }
+    val scope = rememberCoroutineScope()
+    var forecast by remember { mutableStateOf<HourlyForecast?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(true) }
+
+    suspend fun load() {
+        loading = true
+        error = null
+        try {
+            forecast = client.hourly(baseUrl)
+        } catch (e: Exception) {
+            forecast = null
+            error = e.message
+        } finally {
+            loading = false
+        }
+    }
+
+    LaunchedEffect(baseUrl) { load() }
+    val slots = forecast?.let(::forecastSlots)
+    SectionColumn {
+        OutlinedButton(onClick = { scope.launch { load() } }) { Text("Refresh") }
+        if (loading) Text("Loading…")
+        if (!error.isNullOrBlank()) Text(error!!, color = MaterialTheme.colorScheme.error)
+        val shown = forecast
+        if (shown != null && slots == null) {
+            Text("Forecast window is missing a start time.", color = MaterialTheme.colorScheme.error)
+        }
+        if (shown != null && slots != null) {
+            Text(forecastCaption(shown), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (shown.points.isEmpty()) {
+                Text("No hourly forecast stored for the next 24 hours.")
+            } else {
+                ForecastChart(
+                    title = "Temperature and humidity",
+                    primaryName = "Temperature °C",
+                    secondaryName = "Humidity %",
+                    primary = seriesOf(slots) { it.temperatureC },
+                    secondary = seriesOf(slots) { it.humidityPct },
+                    labels = slots.map { it.label },
+                    chartLabel = "Temperature and humidity for the next 24 hours",
+                )
+                ForecastChart(
+                    title = "Precipitation and wind",
+                    primaryName = "Precipitation %",
+                    secondaryName = "Wind km/h",
+                    primary = seriesOf(slots) { it.precipitationProbability },
+                    secondary = seriesOf(slots) { it.windKph },
+                    labels = slots.map { it.label },
+                    chartLabel = "Precipitation probability and wind for the next 24 hours",
+                )
+                Text("Condition", style = MaterialTheme.typography.titleMedium)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    slots.forEach { slot ->
+                        val condition = slot.point?.conditionLabel?.takeIf { it.isNotBlank() } ?: "—"
+                        Text("${slot.label} $condition", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ForecastChart(
+    title: String,
+    primaryName: String,
+    secondaryName: String,
+    primary: List<Double?>,
+    secondary: List<Double?>,
+    labels: List<String>,
+    chartLabel: String,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            RowLegend(primaryName, secondaryName)
+            LineChart(primary, secondary = secondary, label = chartLabel)
+            if (labels.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    labels.forEach { label ->
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowLegend(primaryName: String, secondaryName: String) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(primaryName, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+        Text(secondaryName, color = ForecastLine, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+private val ForecastLine = Color(0xFF7AA2D6)
+
+private data class ForecastSlot(val label: String, val point: HourlyForecastPoint?)
+
+private fun forecastSlots(forecast: HourlyForecast): List<ForecastSlot>? {
+    val start = runCatching { Instant.parse(forecast.from) }.getOrNull() ?: return null
+    val zone = runCatching { ZoneId.of(forecast.timezone) }.getOrElse { ZoneId.of("Europe/Berlin") }
+    val hours = forecast.windowHours.coerceAtLeast(1)
+    val formatter = DateTimeFormatter.ofPattern("HH:mm").withZone(zone)
+    val slots = MutableList(hours) { index ->
+        ForecastSlot(formatter.format(start.plus(index.toLong(), ChronoUnit.HOURS)), null)
+    }
+    for (point in forecast.points) {
+        val at = runCatching { Instant.parse(point.ts) }.getOrNull() ?: continue
+        val index = ChronoUnit.HOURS.between(start, at).toInt()
+        if (index in slots.indices) slots[index] = slots[index].copy(point = point)
+    }
+    return slots
+}
+
+private fun seriesOf(
+    slots: List<ForecastSlot>,
+    pick: (HourlyForecastPoint) -> Double?,
+): List<Double?> = slots.map { slot -> slot.point?.let(pick) }
+
+private fun forecastCaption(forecast: HourlyForecast): String {
+    val zoneName = forecast.timezone.ifBlank { "Europe/Berlin" }
+    val zone = runCatching { ZoneId.of(zoneName) }.getOrElse { ZoneId.of("Europe/Berlin") }
+    val points = forecast.points
+    if (points.isEmpty()) return "No stored hours in the next 24 hours ($zoneName)."
+    val counts = points.map { it.providerCount }
+    val low = counts.min()
+    val high = counts.max()
+    val providers = if (low == high) {
+        if (low == 1) "1 provider" else "$low providers"
+    } else {
+        "$low–$high providers"
+    }
+    val fetched = points.mapNotNull { it.fetchedAt }.maxOrNull()
+    val whenText = if (fetched == null) {
+        "unknown time"
+    } else {
+        runCatching {
+            DateTimeFormatter.ofPattern("d MMM, HH:mm").withZone(zone).format(Instant.parse(fetched))
+        }.getOrDefault(fetched)
+    }
+    return "$providers · fetched $whenText · $zoneName"
 }
 
 @Composable

@@ -38,6 +38,14 @@ def _clean_weekdays(days: list[int] | None) -> list[int] | None:
     return cleaned
 
 
+def _check_remind(value: int | None) -> int | None:
+    if value is None:
+        return None
+    if value < 1 or value > 10080:
+        raise ValueError("remind_before_minutes must be between 1 and 10080")
+    return value
+
+
 def _clean_color(value: str) -> str:
     text = value.strip()
     if len(text) == 4 and text.startswith("#"):
@@ -58,6 +66,7 @@ class EventCreate(BaseModel):
     repeat: str | None = None
     repeat_until: date | None = None
     repeat_weekdays: list[int] | None = None
+    remind_before_minutes: int | None = None
 
     @field_validator("title")
     @classmethod
@@ -86,6 +95,11 @@ class EventCreate(BaseModel):
     def normalize_weekdays(cls, v: list[int] | None) -> list[int] | None:
         return _clean_weekdays(v)
 
+    @field_validator("remind_before_minutes")
+    @classmethod
+    def check_remind(cls, v: int | None) -> int | None:
+        return _check_remind(v)
+
     @model_validator(mode="after")
     def end_after_start(self) -> EventCreate:
         if self.end is not None and self.end < self.start:
@@ -113,6 +127,8 @@ class EventUpdate(BaseModel):
     repeat_until: date | None = None
     clear_repeat_until: bool = False
     repeat_weekdays: list[int] | None = None
+    remind_before_minutes: int | None = None
+    clear_remind: bool = False
 
     @field_validator("title")
     @classmethod
@@ -145,6 +161,11 @@ class EventUpdate(BaseModel):
     def normalize_weekdays(cls, v: list[int] | None) -> list[int] | None:
         return _clean_weekdays(v)
 
+    @field_validator("remind_before_minutes")
+    @classmethod
+    def check_remind(cls, v: int | None) -> int | None:
+        return _check_remind(v)
+
 
 class EventOut(BaseModel):
     id: str
@@ -163,6 +184,8 @@ class EventOut(BaseModel):
     repeat: str | None = None
     repeat_until: str | None = None
     repeat_weekdays: list[int] = Field(default_factory=list)
+    remind_before_minutes: int | None = None
+    ics_uid: str | None = None
 
 
 class EventListOut(BaseModel):
@@ -194,3 +217,17 @@ class TagColorIn(BaseModel):
 class TagListOut(BaseModel):
     tags: list[str]
     colors: dict[str, str] = Field(default_factory=dict)
+
+
+class ImportIssue(BaseModel):
+    title: str
+    uid: str | None = None
+    detail: str
+
+
+class ImportResult(BaseModel):
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    repeat_dropped: list[ImportIssue] = Field(default_factory=list)
+    alarm_dropped: list[ImportIssue] = Field(default_factory=list)

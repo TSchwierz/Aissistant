@@ -2,12 +2,18 @@
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import tempfile
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from bleak.backends.scanner import BaseBleakScanner
 from sqlalchemy import delete, select
@@ -16,6 +22,7 @@ from server.config import get_settings
 from server.modules.health import scale_scan
 from server.modules.health.database import get_session_factory, init_db, reset_engine_for_tests
 from server.modules.health.models import Measurement
+from server.modules.health.router import router
 from server.modules.health.okok import (
     ScaleReading,
     parse_c0_payload,
@@ -32,10 +39,12 @@ from server.modules.health.scale_window import (
 
 class ListenWindowTests(unittest.TestCase):
     def test_morning_hours_only(self):
-        self.assertFalse(should_listen(hour=5, recorded_today=False))
-        self.assertTrue(should_listen(hour=6, recorded_today=False))
-        self.assertTrue(should_listen(hour=11, recorded_today=False))
-        self.assertFalse(should_listen(hour=12, recorded_today=False))
+        self.assertFalse(should_listen(hour=7, recorded_today=False))
+        self.assertTrue(should_listen(hour=8, recorded_today=False))
+        self.assertTrue(should_listen(hour=9, recorded_today=False))
+        self.assertFalse(should_listen(hour=10, recorded_today=False))
+        self.assertFalse(should_listen(hour=6, recorded_today=False))
+        self.assertFalse(should_listen(hour=11, recorded_today=False))
 
     def test_stops_after_today_is_recorded(self):
         self.assertFalse(should_listen(hour=8, recorded_today=True))
@@ -122,7 +131,7 @@ _SCALE_ADDRESS = "AA:BB:CC:DD:EE:FF"
 
 
 class _FrozenDateTime(datetime):
-    """08:00 on a fixed day, inside the default 06:00–12:00 listen window."""
+    """08:00 on a fixed day, the inclusive start of the default 08:00–10:00 window."""
 
     @classmethod
     def now(cls, tz=None):  # noqa: ANN001
@@ -324,8 +333,8 @@ class ScaleScanTests(unittest.TestCase):
         os.environ["PA_DATA_DIR"] = self._tmp.name
         os.environ["PA_TIMEZONE"] = "Europe/Berlin"
         os.environ["PA_SCALE_SCAN_ENABLED"] = "true"
-        os.environ["PA_SCALE_LISTEN_START_HOUR"] = "6"
-        os.environ["PA_SCALE_LISTEN_END_HOUR"] = "12"
+        os.environ["PA_SCALE_LISTEN_START_HOUR"] = "8"
+        os.environ["PA_SCALE_LISTEN_END_HOUR"] = "10"
         get_settings.cache_clear()
         reset_engine_for_tests()
         init_db()
@@ -342,7 +351,9 @@ class ScaleScanTests(unittest.TestCase):
             phase="idle",
             detail="",
             recorded_today=False,
-            window="06:00-12:00",
+            window="08:00-10:00",
+            start_hour=8,
+            end_hour=10,
             last_weight_kg=None,
             last_error=None,
         )
@@ -485,6 +496,196 @@ class ScaleScanTests(unittest.TestCase):
         self.assertEqual(status["phase"], "error")
         self.assertIn("adapter missing", status["detail"])
         self.assertIn("adapter missing", status["last_error"])
+
+    def test_absent_file_uses_settings_and_auto_uses_the_saved_window(self):
+        os.environ["PA_SCALE_LISTEN_START_HOUR"] = "6"
+        os.environ["PA_SCALE_LISTEN_END_HOUR"] = "7"
+        get_settings.cache_clear()
+        data_dir = Path(get_settings().data_dir)
+        self.assertFalse((data_dir / "scale_window.json").is_file())
+        self.assertEqual(scale_scan.read_scale_window(), (6, 7))
+        self.assertFalse(scale_scan._listen_context()["listening"])
+
+        scale_scan.set_scale_window(8, 10)
+        saved = json.loads((data_dir / "scale_window.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved, {"start_hour": 8, "end_hour": 10})
+        self.assertTrue((data_dir / "scale_mode.json").parent == (data_dir / "scale_window.json").parent)
+        ctx = scale_scan._listen_context()
+        self.assertEqual(ctx["mode"], "auto")
+        self.assertTrue(ctx["listening"])
+        self.assertEqual(ctx["window"], "08:00-10:00")
+        status = scale_scan.scale_status()
+        self.assertEqual(status["start_hour"], 8)
+        self.assertEqual(status["end_hour"], 10)
+        self.assertEqual(status["window"], "08:00-10:00")
+        self.assertIsInstance(status["start_hour"], int)
+        self.assertIsInstance(status["end_hour"], int)
+
+    def test_saved_window_outside_the_hour_does_not_scan(self):
+        scale_scan.set_scale_window(11, 14)
+        _RecordingScanner.scripts = [[_packet(_LOCKED_75_KG_520_OHM)]]
+
+        async def run() -> None:
+            with (
+                patch("bleak.BleakScanner", _RecordingScanner),
+                patch.object(scale_scan, "_wait", _end_when_idle),
+            ):
+                await scale_scan._serve()
+
+        _run(run())
+        self.assertEqual(_RecordingScanner.created, [])
+        self.assertEqual(_measurements(), [])
+        status = scale_scan.scale_status()
+        self.assertEqual(status["mode"], "auto")
+        self.assertEqual(status["phase"], "outside")
+        self.assertEqual(status["start_hour"], 11)
+        self.assertEqual(status["end_hour"], 14)
+        self.assertEqual(status["window"], "11:00-14:00")
+        self.assertIn("11:00-14:00", status["detail"])
+
+    def test_auto_stops_for_the_day_once_today_is_stored(self):
+        scale_scan.set_scale_window(8, 10)
+        db = get_session_factory()()
+        try:
+            db.add(
+                Measurement(
+                    client_id="already-today",
+                    measured_at=datetime(2026, 10, 22, 8, 5, tzinfo=ZoneInfo("Europe/Berlin")),
+                    weight_kg=74.0,
+                    unit="kg",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+        _RecordingScanner.scripts = [[_packet(_LOCKED_75_KG_520_OHM)]]
+
+        async def run() -> None:
+            with (
+                patch("bleak.BleakScanner", _RecordingScanner),
+                patch.object(scale_scan, "_wait", _end_when_idle),
+            ):
+                await scale_scan._serve()
+
+        _run(run())
+        self.assertEqual(_RecordingScanner.created, [])
+        self.assertEqual(len(_measurements()), 1)
+        status = scale_scan.scale_status()
+        self.assertEqual(status["phase"], "recorded")
+        self.assertTrue(status["recorded_today"])
+        self.assertEqual(status["mode"], "auto")
+
+        scale_scan._stop.clear()
+        scale_scan.set_scale_mode("on")
+        self.assertTrue(scale_scan._listen_context()["listening"])
+
+    def test_invalid_window_is_not_stored(self):
+        for start_hour, end_hour in ((10, 10), (14, 8), (-1, 5), (8, 24), (True, 10)):
+            with self.assertRaises(ValueError):
+                scale_scan.set_scale_window(start_hour, end_hour)
+        self.assertFalse((Path(get_settings().data_dir) / "scale_window.json").is_file())
+
+    def test_settings_default_window_is_eight_to_ten(self):
+        os.environ.pop("PA_SCALE_LISTEN_START_HOUR", None)
+        os.environ.pop("PA_SCALE_LISTEN_END_HOUR", None)
+        get_settings.cache_clear()
+        settings = get_settings()
+        self.assertEqual(settings.scale_listen_start_hour, 8)
+        self.assertEqual(settings.scale_listen_end_hour, 10)
+        self.assertEqual(scale_scan.read_scale_window(), (8, 10))
+        status = scale_scan.scale_status()
+        self.assertEqual(status["window"], "08:00-10:00")
+
+
+class ScaleWindowApiTests(unittest.TestCase):
+    def setUp(self):
+        self.client = None
+        self._tmp = tempfile.TemporaryDirectory()
+        self._old_env = {
+            "PA_DATA_DIR": os.environ.get("PA_DATA_DIR"),
+            "PA_TIMEZONE": os.environ.get("PA_TIMEZONE"),
+            "PA_SCALE_LISTEN_START_HOUR": os.environ.get("PA_SCALE_LISTEN_START_HOUR"),
+            "PA_SCALE_LISTEN_END_HOUR": os.environ.get("PA_SCALE_LISTEN_END_HOUR"),
+        }
+        os.environ["PA_DATA_DIR"] = self._tmp.name
+        os.environ["PA_TIMEZONE"] = "Europe/Berlin"
+        os.environ.pop("PA_SCALE_LISTEN_START_HOUR", None)
+        os.environ.pop("PA_SCALE_LISTEN_END_HOUR", None)
+        get_settings.cache_clear()
+        scale_scan._state.update(
+            enabled=True,
+            phase="idle",
+            detail="",
+            recorded_today=False,
+            window="08:00-10:00",
+            start_hour=8,
+            end_hour=10,
+            last_weight_kg=None,
+            last_error=None,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        self.client = TestClient(app)
+        self.client.__enter__()
+
+    def tearDown(self):
+        if self.client is not None:
+            self.client.__exit__(None, None, None)
+        for key, old in self._old_env.items():
+            if old is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old
+        get_settings.cache_clear()
+        self._tmp.cleanup()
+
+    def test_get_reports_default_window_without_a_file(self):
+        res = self.client.get("/api/scale")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["start_hour"], 8)
+        self.assertEqual(body["end_hour"], 10)
+        self.assertEqual(body["window"], "08:00-10:00")
+        self.assertIsInstance(body["start_hour"], int)
+        self.assertIsInstance(body["end_hour"], int)
+        self.assertFalse((Path(get_settings().data_dir) / "scale_window.json").exists())
+
+    def test_post_persists_window_beside_scale_mode(self):
+        mode = self.client.post("/api/scale/mode", json={"action": "auto"})
+        self.assertEqual(mode.status_code, 200)
+        saved = self.client.post("/api/scale/window", json={"start_hour": 7, "end_hour": 11})
+        self.assertEqual(saved.status_code, 200)
+        body = saved.json()
+        self.assertEqual(body["start_hour"], 7)
+        self.assertEqual(body["end_hour"], 11)
+        self.assertEqual(body["window"], "07:00-11:00")
+        self.assertEqual(body["mode"], "auto")
+        data_dir = Path(get_settings().data_dir)
+        self.assertTrue((data_dir / "scale_mode.json").is_file())
+        on_disk = json.loads((data_dir / "scale_window.json").read_text(encoding="utf-8"))
+        self.assertEqual(on_disk, {"start_hour": 7, "end_hour": 11})
+        again = self.client.get("/api/scale")
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.json()["start_hour"], 7)
+        self.assertEqual(again.json()["end_hour"], 11)
+        self.assertEqual(again.json()["window"], "07:00-11:00")
+
+    def test_post_rejects_end_not_after_start(self):
+        for body in ({"start_hour": 10, "end_hour": 10}, {"start_hour": 12, "end_hour": 8}):
+            res = self.client.post("/api/scale/window", json=body)
+            self.assertEqual(res.status_code, 422, body)
+        self.assertFalse((Path(get_settings().data_dir) / "scale_window.json").exists())
+
+    def test_post_rejects_hours_outside_0_23(self):
+        for body in (
+            {"start_hour": -1, "end_hour": 10},
+            {"start_hour": 8, "end_hour": 24},
+            {"start_hour": 25, "end_hour": 26},
+            {"start_hour": 8.5, "end_hour": 10},
+        ):
+            res = self.client.post("/api/scale/window", json=body)
+            self.assertEqual(res.status_code, 422, body)
+        self.assertFalse((Path(get_settings().data_dir) / "scale_window.json").exists())
 
 
 class OkokParserTests(unittest.TestCase):

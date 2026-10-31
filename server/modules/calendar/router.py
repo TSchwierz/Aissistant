@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from server.config import get_settings
 from server.modules.calendar import service
@@ -14,6 +14,7 @@ from server.modules.calendar.schemas import (
     EventListOut,
     EventOut,
     EventUpdate,
+    ImportResult,
     TagColorIn,
     TagListOut,
 )
@@ -244,6 +245,19 @@ def get_rolling_weeks(
         exclude_tags=_split_csv(exclude_tag),
     )
     return _list_payload(start, end, events)
+
+
+@router.post("/import", response_model=ImportResult)
+def import_events(file: UploadFile = File(...)) -> ImportResult:
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="file is empty")
+    if len(raw) > 20_000_000:
+        raise HTTPException(status_code=413, detail="file is too large")
+    try:
+        return service.import_file(file.filename or "upload.ics", raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/tags", response_model=TagListOut)

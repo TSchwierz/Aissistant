@@ -1,6 +1,7 @@
 /** Pi LAN API client — no AI keys in the browser. */
 
 const STORAGE_KEY = 'pa_api_base'
+const API_KEY_STORAGE = 'pa_api_key'
 
 export function getApiBase(): string {
   const stored = localStorage.getItem(STORAGE_KEY)
@@ -11,6 +12,33 @@ export function getApiBase(): string {
 
 export function setApiBase(url: string): void {
   localStorage.setItem(STORAGE_KEY, url.trim().replace(/\/$/, ''))
+}
+
+export function getApiKey(): string {
+  return localStorage.getItem(API_KEY_STORAGE) ?? ''
+}
+
+export function setApiKey(key: string): void {
+  localStorage.setItem(API_KEY_STORAGE, key.trim())
+}
+
+function authHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init)
+  const key = getApiKey().trim()
+  if (key) headers.set('Authorization', `Bearer ${key}`)
+  return headers
+}
+
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`${getApiBase()}${path}`, {
+    ...init,
+    headers: authHeaders(init?.headers),
+  })
+}
+
+async function ensureOk(res: Response): Promise<void> {
+  if (res.status === 401) throw new Error('API key rejected')
+  if (!res.ok) throw new Error(await readApiError(res))
 }
 
 async function readApiError(res: Response): Promise<string> {
@@ -40,18 +68,24 @@ async function readApiError(res: Response): Promise<string> {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${getApiBase()}${path}`)
-  if (!res.ok) throw new Error(await readApiError(res))
+  const res = await apiFetch(path)
+  await ensureOk(res)
   return res.json() as Promise<T>
 }
 
 async function sendJson<T>(method: string, path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${getApiBase()}${path}`, {
+  const res = await apiFetch(path, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(await readApiError(res))
+  await ensureOk(res)
+  return res.json() as Promise<T>
+}
+
+async function sendForm<T>(path: string, body: FormData): Promise<T> {
+  const res = await apiFetch(path, { method: 'POST', body })
+  await ensureOk(res)
   return res.json() as Promise<T>
 }
 
@@ -113,6 +147,8 @@ export type CalendarEvent = {
   repeat?: 'weekly' | 'biweekly' | 'monthly' | null
   repeat_until?: string | null
   repeat_weekdays?: number[]
+  remind_before_minutes?: number | null
+  ics_uid?: string | null
 }
 
 export type CalendarEventWrite = {
@@ -131,6 +167,22 @@ export type CalendarEventWrite = {
   repeat_weekdays?: number[]
   clear_repeat?: boolean
   clear_repeat_until?: boolean
+  remind_before_minutes?: number | null
+  clear_remind?: boolean
+}
+
+export type CalendarImportIssue = {
+  title: string
+  uid?: string | null
+  detail: string
+}
+
+export type CalendarImportResult = {
+  created: number
+  updated: number
+  skipped: number
+  repeat_dropped: CalendarImportIssue[]
+  alarm_dropped: CalendarImportIssue[]
 }
 
 export type EventList = {
@@ -382,6 +434,11 @@ export const api = {
       `/calendar/events/${encodeURIComponent(id)}`,
       {},
     ),
+  importCalendar: (file: File) => {
+    const body = new FormData()
+    body.append('file', file)
+    return sendForm<CalendarImportResult>('/calendar/import', body)
+  },
   healthStats: () => getJson<HealthStats>('/api/stats'),
   scaleStatus: () =>
     getJson<{
@@ -445,7 +502,8 @@ export const api = {
     sendJson<NewsTopic>('PUT', `/news/topics/${encodeURIComponent(id)}`, body),
   /** Trigger browser download of SSOT zip (Phase 6 light backup). */
   downloadBackup: async (): Promise<void> => {
-    const res = await fetch(`${getApiBase()}/backup/export`)
+    const res = await apiFetch('/backup/export')
+    if (res.status === 401) throw new Error('API key rejected')
     if (!res.ok) {
       const text = await res.text()
       throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`)

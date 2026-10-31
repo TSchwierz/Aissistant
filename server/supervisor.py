@@ -30,6 +30,9 @@ def child_commands(python: str) -> list[tuple[str, list[str]]]:
 
 
 def main() -> None:
+    from server.auth import require_api_key
+
+    require_api_key()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     python = sys.executable
     specs = child_commands(python)

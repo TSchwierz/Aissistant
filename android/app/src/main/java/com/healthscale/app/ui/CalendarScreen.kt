@@ -2,6 +2,13 @@
 
 package com.healthscale.app.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -26,15 +33,26 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.healthscale.app.api.CalDraft
 import com.healthscale.app.api.CalEvent
+import com.healthscale.app.api.CalImport
 import com.healthscale.app.api.CalList
 import com.healthscale.app.api.HubClient
+import com.healthscale.app.api.parseCalendarList
+import com.healthscale.app.calendar.CalendarReminderScheduler
+import com.healthscale.app.data.AppDatabase
+import com.healthscale.app.data.CalendarCache
+import org.json.JSONObject
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private enum class CalMode { Weeks, Month }
@@ -50,39 +68,111 @@ private data class EventDraft(
     val location: String,
     val notes: String,
     val tags: String,
+    val remindAmount: String,
+    val remindUnit: String,
 )
 
 @Composable
 fun CalendarPane(baseUrl: String) {
+    val context = LocalContext.current
     val client = remember { HubClient() }
+    val database = remember { AppDatabase.get(context) }
     var mode by remember { mutableStateOf(CalMode.Weeks) }
     var cursor by remember { mutableStateOf(LocalDate.now()) }
     var tag by remember { mutableStateOf("") }
     var tags by remember { mutableStateOf<List<String>>(emptyList()) }
     var list by remember { mutableStateOf<CalList?>(null) }
+    var cached by remember { mutableStateOf<CalList?>(null) }
+    var offline by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var draft by remember { mutableStateOf<EventDraft?>(null) }
     var formError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
+    var importNote by remember { mutableStateOf<String?>(null) }
+    var notifyDenied by remember { mutableStateOf(false) }
+    var askedNotify by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> notifyDenied = !granted }
+
+    fun askNotify(events: List<CalEvent>, fromUser: Boolean) {
+        if (events.none { (it.remindBeforeMinutes ?: 0) > 0 } && !fromUser) return
+        if (Build.VERSION.SDK_INT < 33) return
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            notifyDenied = false
+            return
+        }
+        if (!fromUser && askedNotify) return
+        askedNotify = true
+        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
 
     suspend fun load() {
         loading = true
         error = null
         try {
             val selected = tag.ifBlank { null }
-            tags = client.calendarTags(baseUrl)
+            runCatching { tags = client.calendarTags(baseUrl) }
             list = if (mode == CalMode.Month) {
                 client.calendarMonth(baseUrl, cursor.format(DateTimeFormatter.ofPattern("yyyy-MM")), selected)
             } else {
                 client.calendarWeeks(baseUrl, cursor.toString(), selected)
             }
+            offline = false
+            try {
+                val payload = client.calendarWindow(baseUrl)
+                cached = payload.list
+                database.calendarCacheDao().upsert(
+                    CalendarCache(
+                        payloadJson = payload.rawJson,
+                        savedAtEpochMs = System.currentTimeMillis(),
+                    ),
+                )
+                CalendarReminderScheduler.reschedule(context, payload.list)
+                askNotify(payload.list.events, fromUser = false)
+            } catch (_: Exception) {
+                /* the view is live; keep the previously saved window */
+            }
         } catch (e: Exception) {
-            error = e.message
+            offline = true
+            error = e.message ?: "Could not reach the server"
+            val stored = cached ?: database.calendarCacheDao().get()?.let { row ->
+                runCatching { parseCalendarList(JSONObject(row.payloadJson)) }.getOrNull()
+            }
+            cached = stored
+            list = stored?.let { filterOffline(it, mode, cursor, tag) }
         } finally {
             loading = false
+        }
+    }
+
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            importing = true
+            importNote = null
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val name = displayName(context, uri)
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: kotlin.error("Could not read the file")
+                    client.importCalendar(baseUrl, name, bytes)
+                }
+                importNote = importSummary(result)
+                load()
+            } catch (e: Exception) {
+                importNote = e.message ?: "Import failed"
+            } finally {
+                importing = false
+            }
         }
     }
 
@@ -135,6 +225,21 @@ fun CalendarPane(baseUrl: String) {
                 draft = blankDraft()
                 formError = null
             }) { Text("New event") }
+            OutlinedButton(
+                onClick = {
+                    importPicker.launch(
+                        arrayOf(
+                            "text/calendar",
+                            "application/zip",
+                            "text/csv",
+                            "text/comma-separated-values",
+                            "application/octet-stream",
+                            "*/*",
+                        ),
+                    )
+                },
+                enabled = !importing,
+            ) { Text(if (importing) "Importing…" else "Import") }
             OutlinedButton(onClick = { mode = CalMode.Weeks }) { Text("2 weeks") }
             OutlinedButton(onClick = { mode = CalMode.Month }) { Text("Month") }
         }
@@ -155,6 +260,7 @@ fun CalendarPane(baseUrl: String) {
                 onChange = { draft = it },
                 onCancel = { draft = null },
                 onDelete = { confirmDelete = true },
+                onAskNotify = { askNotify(emptyList(), fromUser = true) },
                 onSave = { updated ->
                     scope.launch {
                         saving = true
@@ -182,6 +288,19 @@ fun CalendarPane(baseUrl: String) {
                 FilterChip(selected = tag == item, onClick = { tag = item }, label = { Text(item) })
             }
         }
+        if (notifyDenied) {
+            Text(
+                "Notifications are blocked. Events still save.",
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (!importNote.isNullOrBlank()) Text(importNote!!)
+        if (offline && list != null) {
+            Text(
+                "Offline — showing saved events for the next 7 days. Other days are empty.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         if (loading) Text("Loading…")
         if (!error.isNullOrBlank()) Text(error!!, color = MaterialTheme.colorScheme.error)
         val events = list?.events.orEmpty()
@@ -198,6 +317,10 @@ fun CalendarPane(baseUrl: String) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(if (event.allDay) "${event.start.take(10)} · all day" else event.start)
                         Text(event.title, style = MaterialTheme.typography.titleMedium)
+                        event.remindBeforeMinutes?.let { minutes ->
+                            val label = if (minutes % 60 == 0) "${minutes / 60} h before" else "$minutes min before"
+                            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         val extra = listOfNotNull(event.location, event.tags.takeIf { it.isNotEmpty() }?.joinToString(", "))
                         Text(extra.joinToString(" · ").ifBlank { "—" }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedButton(onClick = { draft = draftFrom(event); formError = null }) { Text("Edit") }
@@ -217,6 +340,7 @@ private fun EventEditor(
     onChange: (EventDraft) -> Unit,
     onCancel: () -> Unit,
     onDelete: () -> Unit,
+    onAskNotify: () -> Unit,
     onSave: (EventDraft) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth()) {
@@ -266,6 +390,49 @@ private fun EventEditor(
                     value = draft.endTime,
                     onValueChange = { onChange(draft.copy(endTime = it)) },
                     label = { Text("End time") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+            }
+            Text("Reminder", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = draft.remindUnit == "none",
+                    onClick = { onChange(draft.copy(remindUnit = "none", remindAmount = "")) },
+                    label = { Text("None") },
+                )
+                FilterChip(
+                    selected = draft.remindUnit == "minutes",
+                    onClick = {
+                        onChange(
+                            draft.copy(
+                                remindUnit = "minutes",
+                                remindAmount = if (draft.remindUnit == "minutes") draft.remindAmount.ifBlank { "15" } else "15",
+                            ),
+                        )
+                        onAskNotify()
+                    },
+                    label = { Text("Minutes") },
+                )
+                FilterChip(
+                    selected = draft.remindUnit == "hours",
+                    onClick = {
+                        onChange(
+                            draft.copy(
+                                remindUnit = "hours",
+                                remindAmount = if (draft.remindUnit == "hours") draft.remindAmount.ifBlank { "1" } else "1",
+                            ),
+                        )
+                        onAskNotify()
+                    },
+                    label = { Text("Hours") },
+                )
+            }
+            if (draft.remindUnit != "none") {
+                OutlinedTextField(
+                    value = draft.remindAmount,
+                    onValueChange = { onChange(draft.copy(remindAmount = it)) },
+                    label = { Text(if (draft.remindUnit == "hours") "Hours before" else "Minutes before") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                 )
@@ -360,6 +527,8 @@ private fun blankDraft(): EventDraft {
         location = "",
         notes = "",
         tags = "",
+        remindAmount = "",
+        remindUnit = "none",
     )
 }
 
@@ -374,6 +543,8 @@ private fun draftFrom(event: CalEvent) = EventDraft(
     location = event.location.orEmpty(),
     notes = event.notes.orEmpty(),
     tags = event.tags.joinToString(", "),
+    remindAmount = remindFields(event.remindBeforeMinutes).first,
+    remindUnit = remindFields(event.remindBeforeMinutes).second,
 )
 
 private fun EventDraft.toApi(): CalDraft {
@@ -389,6 +560,17 @@ private fun EventDraft.toApi(): CalDraft {
         "${endDate.take(10)}T${endTime.ifBlank { "10:00" }}:00"
     }
     val parsedTags = tags.split(",").map { it.trim() }.filter { it.isNotEmpty() }.distinctBy { it.lowercase() }
+    val minutes = when (remindUnit) {
+        "none" -> null
+        "hours" -> {
+            val hours = remindAmount.toIntOrNull() ?: error("Reminder must be a whole number of hours")
+            hours * 60
+        }
+        else -> remindAmount.toIntOrNull() ?: error("Reminder must be a whole number of minutes")
+    }
+    if (minutes != null && (minutes < 1 || minutes > 10080)) {
+        error("Reminder must be between 1 minute and 7 days")
+    }
     return CalDraft(
         title = titleText,
         start = start,
@@ -398,5 +580,66 @@ private fun EventDraft.toApi(): CalDraft {
         notes = notes.trim().ifBlank { null },
         tags = parsedTags,
         editing = id != null,
+        remindBeforeMinutes = minutes,
     )
+}
+
+private fun remindFields(minutes: Int?): Pair<String, String> {
+    if (minutes == null || minutes <= 0) return "" to "none"
+    if (minutes % 60 == 0) return (minutes / 60).toString() to "hours"
+    return minutes.toString() to "minutes"
+}
+
+private fun displayName(context: android.content.Context, uri: Uri): String {
+    return runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull().orEmpty().ifBlank { "calendar.ics" }
+}
+
+private fun importSummary(result: CalImport): String {
+    val parts = mutableListOf(
+        "Imported ${result.created} created, ${result.updated} updated, ${result.skipped} skipped.",
+    )
+    if (result.repeatDropped.isNotEmpty()) {
+        parts += "Repeat not kept: " + result.repeatDropped.joinToString { "${it.title} (${it.detail})" }
+    }
+    if (result.alarmDropped.isNotEmpty()) {
+        parts += "Alarm not kept: " + result.alarmDropped.joinToString { "${it.title} (${it.detail})" }
+    }
+    return parts.joinToString(" ")
+}
+
+private fun filterOffline(cache: CalList, mode: CalMode, cursor: LocalDate, tag: String): CalList {
+    val (winStart, winEnd) = offlineWindow(cache.timezone)
+    val (viewStart, viewEnd) = viewBounds(mode, cursor)
+    val events = cache.events.filter { event ->
+        overlaps(event, winStart, winEnd) &&
+            overlaps(event, viewStart, viewEnd) &&
+            (tag.isBlank() || event.tags.any { it.equals(tag, ignoreCase = true) })
+    }
+    return cache.copy(count = events.size, events = events)
+}
+
+private fun offlineWindow(timezone: String): Pair<LocalDate, LocalDate> {
+    val zone = runCatching { ZoneId.of(timezone.ifBlank { "Europe/Berlin" }) }
+        .getOrDefault(ZoneId.of("Europe/Berlin"))
+    val today = LocalDate.now(zone)
+    return today to today.plusDays(7)
+}
+
+private fun viewBounds(mode: CalMode, cursor: LocalDate): Pair<LocalDate, LocalDate> {
+    if (mode == CalMode.Month) {
+        val cells = monthCells(cursor)
+        return cells.first() to cells.last().plusDays(1)
+    }
+    return cursor to cursor.plusDays(14)
+}
+
+private fun overlaps(event: CalEvent, start: LocalDate, endExclusive: LocalDate): Boolean {
+    val eventStart = runCatching { LocalDate.parse(event.start.take(10)) }.getOrNull() ?: return false
+    val endText = event.end?.take(10)?.ifBlank { null } ?: event.start.take(10)
+    val eventEnd = runCatching { LocalDate.parse(endText) }.getOrNull() ?: eventStart
+    return eventStart < endExclusive && eventEnd.plusDays(1) > start
 }

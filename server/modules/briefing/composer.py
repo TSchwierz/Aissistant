@@ -1,9 +1,12 @@
-"""Compose English radio-style morning brief + optional in-memory cache."""
+"""Compose an English radio-style morning brief.
+
+Today's brief is stored on disk by ``server.modules.briefing.store``. This
+module only builds a fresh response. It does not cache one in memory.
+"""
 
 from __future__ import annotations
 
-import threading
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from server.config import get_settings
@@ -22,15 +25,6 @@ from server.models.briefing import (
 from server.modules import calendar as calendar_mod
 from server.modules import news as news_mod
 from server.modules import weather as weather_mod
-
-_CACHE_LOCK = threading.Lock()
-_CACHE: dict[str, tuple[datetime, MorningBriefResponse]] = {}
-_CACHE_TTL = timedelta(minutes=15)
-
-
-def clear_brief_cache() -> None:
-    with _CACHE_LOCK:
-        _CACHE.clear()
 
 
 def _weekday_name(d: date) -> str:
@@ -105,8 +99,8 @@ def _news_spoken(news_raw: list[dict]) -> str:
 def compose_morning_brief(
     *,
     date_param: str | None = None,
-    refresh: bool = False,
 ) -> MorningBriefResponse:
+    """Build a fresh brief. Callers decide whether to read or write the disk file."""
     settings = get_settings()
     tz = ZoneInfo(settings.timezone)
     brief_date = (
@@ -114,14 +108,6 @@ def compose_morning_brief(
     )
     date_iso = brief_date.isoformat()
     now = datetime.now(tz)
-
-    if not refresh:
-        with _CACHE_LOCK:
-            cached = _CACHE.get(date_iso)
-            if cached is not None:
-                cached_at, payload = cached
-                if now - cached_at <= _CACHE_TTL:
-                    return payload
 
     weather_raw = weather_mod.get_day_overview(
         date=date_iso, timezone=settings.timezone
@@ -240,7 +226,4 @@ def compose_morning_brief(
         script=script,
         sections=ui_sections,
     )
-
-    with _CACHE_LOCK:
-        _CACHE[date_iso] = (now, response)
     return response

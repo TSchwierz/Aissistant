@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import {
   addDays,
   addHours,
@@ -11,12 +19,14 @@ import {
   startOfMonth,
   startOfWeek,
 } from 'date-fns'
-import { api, type CalendarEvent, type CalendarEventWrite, type EventList } from '../api'
+import { api, type CalendarEvent, type CalendarEventWrite, type CalendarImportResult, type EventList } from '../api.ts'
+import { refreshCalendarReminders, requestCalendarReminderPermission } from '../calendarReminders'
 
 type ViewMode = 'month' | 'week' | 'fortnight' | 'simple'
 type EditorMode = 'create' | 'edit'
 
 type RepeatMode = '' | 'weekly' | 'biweekly' | 'monthly'
+type RemindUnit = 'none' | 'minutes' | 'hours'
 
 type Draft = {
   id: string
@@ -30,7 +40,18 @@ type Draft = {
   repeat: RepeatMode
   repeatUntil: string
   repeatWeekdays: number[]
+  remindAmount: string
+  remindUnit: RemindUnit
 }
+
+type GridPoint = { dayIndex: number; minute: number; hour: number }
+type GridSegment = { dayIndex: number; startMin: number; endMin: number }
+type Gesture =
+  | { kind: 'paint'; anchor: GridPoint; current: GridPoint }
+  | { kind: 'move'; event: CalendarEvent; anchor: GridPoint; current: GridPoint; duration: number }
+  | { kind: 'repeat'; event: CalendarEvent }
+
+const DAY_MINUTES = 24 * 60
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const TAG_PALETTE = ['#5b8def', '#3d9b8f', '#d4a056', '#c46b6b', '#9b7ed4', '#6bcb8a', '#e07a5f', '#4ea8de']
@@ -80,7 +101,15 @@ function emptyDraft(): Draft {
     repeat: '',
     repeatUntil: '',
     repeatWeekdays: [],
+    remindAmount: '',
+    remindUnit: 'none',
   }
+}
+
+function remindParts(minutes: number | null | undefined): { remindAmount: string; remindUnit: RemindUnit } {
+  if (!minutes) return { remindAmount: '', remindUnit: 'none' }
+  if (minutes % 60 === 0) return { remindAmount: String(minutes / 60), remindUnit: 'hours' }
+  return { remindAmount: String(minutes), remindUnit: 'minutes' }
 }
 
 function draftFromEvent(event: CalendarEvent): Draft {
@@ -105,7 +134,19 @@ function draftFromEvent(event: CalendarEvent): Draft {
         : '',
     repeatUntil: event.repeat_until ?? '',
     repeatWeekdays: event.repeat_weekdays ?? [],
+    ...remindParts(event.remind_before_minutes),
   }
+}
+
+function remindMinutes(draft: Draft): number | null {
+  if (draft.remindUnit === 'none') return null
+  const amount = Number(draft.remindAmount)
+  if (!Number.isInteger(amount) || amount < 1) {
+    throw new Error('Reminder must be a whole number of minutes or hours')
+  }
+  const minutes = draft.remindUnit === 'hours' ? amount * 60 : amount
+  if (minutes > 10080) throw new Error('Reminder must be at most 7 days')
+  return minutes
 }
 
 function repeatLabel(ev: CalendarEvent): string {
@@ -152,7 +193,10 @@ function daySegment(ev: CalendarEvent, dayKey: string): { startMin: number; endM
   if (dayKey === startDay && dayKey === endDay) return { startMin, endMin }
   if (dayKey === startDay && endDay > startDay) return { startMin, endMin: 24 * 60 }
   if (dayKey > startDay && dayKey < endDay) return { startMin: 0, endMin: 24 * 60 }
-  if (dayKey === endDay && endDay > startDay) return { startMin: 0, endMin: Math.max(endMin, 15) }
+  if (dayKey === endDay && endDay > startDay) {
+    if (endMin <= 0) return null
+    return { startMin: 0, endMin: endMin }
+  }
   return null
 }
 
@@ -197,7 +241,113 @@ function toWrite(draft: Draft, mode: EditorMode): CalendarEventWrite {
     repeat_weekdays: draft.repeat ? draft.repeatWeekdays : [],
     clear_repeat: mode === 'edit' && !draft.repeat,
     clear_repeat_until: mode === 'edit' && !draft.repeatUntil,
+    remind_before_minutes: remindMinutes(draft),
+    clear_remind: mode === 'edit' && remindMinutes(draft) == null,
   }
+}
+
+function canonical(point: GridPoint): GridPoint {
+  if (point.minute >= DAY_MINUTES) return { dayIndex: point.dayIndex + 1, minute: 0, hour: 0 }
+  return point
+}
+
+function pointKey(point: GridPoint): number {
+  const snapped = canonical(point)
+  return snapped.dayIndex * DAY_MINUTES + snapped.minute
+}
+
+function samePoint(a: GridPoint, b: GridPoint): boolean {
+  return pointKey(a) === pointKey(b)
+}
+
+function parseWall(iso: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso)
+  if (!match) return new Date(iso)
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), 0, 0)
+}
+
+function addMinutes(value: Date, minutes: number): Date {
+  const copy = new Date(value)
+  copy.setMinutes(copy.getMinutes() + minutes)
+  return copy
+}
+
+function durationMinutes(ev: CalendarEvent): number {
+  const start = parseWall(ev.start)
+  const end = ev.end ? parseWall(ev.end) : new Date(start.getTime() + 60 * 60 * 1000)
+  const diff = Math.round((end.getTime() - start.getTime()) / 60000)
+  return Math.max(15, diff || 60)
+}
+
+function snapWall(value: Date): Date {
+  const copy = new Date(value)
+  copy.setSeconds(0, 0)
+  const mins = copy.getHours() * 60 + copy.getMinutes()
+  copy.setHours(0, 0, 0, 0)
+  copy.setMinutes(Math.round(mins / 15) * 15)
+  return copy
+}
+
+function pointToDate(days: Date[], point: GridPoint): Date {
+  const snapped = canonical(point)
+  const last = Math.max(days.length - 1, 0)
+  const index = Math.min(Math.max(snapped.dayIndex, 0), last)
+  const extra = snapped.dayIndex - index
+  const date = new Date(days[index])
+  date.setHours(0, 0, 0, 0)
+  if (extra) date.setDate(date.getDate() + extra)
+  date.setMinutes(snapped.minute)
+  return date
+}
+
+function locate(
+  clientX: number,
+  clientY: number,
+  columns: Array<HTMLDivElement | null>,
+  count: number,
+): GridPoint | null {
+  let chosen = -1
+  let rect: DOMRect | null = null
+  let nearest = Infinity
+  for (let index = 0; index < count; index += 1) {
+    const column = columns[index]
+    if (!column) continue
+    const box = column.getBoundingClientRect()
+    if (box.width <= 0 || box.height <= 0) continue
+    if (clientX >= box.left && clientX < box.right) {
+      chosen = index
+      rect = box
+      break
+    }
+    const distance = clientX < box.left ? box.left - clientX : clientX - box.right
+    if (distance < nearest) {
+      nearest = distance
+      chosen = index
+      rect = box
+    }
+  }
+  if (chosen < 0 || !rect) return null
+  const y = Math.min(Math.max(clientY - rect.top, 0), rect.height)
+  const raw = (y / rect.height) * DAY_MINUTES
+  let minute = Math.round(raw / 15) * 15
+  if (minute < 0) minute = 0
+  if (minute > DAY_MINUTES) minute = DAY_MINUTES
+  const hour = Math.min(23, Math.max(0, Math.floor(Math.min(raw, DAY_MINUTES - 0.01) / 60)))
+  return { dayIndex: chosen, minute, hour }
+}
+
+function rangeSegments(start: Date, end: Date, days: Date[]): GridSegment[] {
+  const fake = {
+    all_day: false,
+    start: format(start, "yyyy-MM-dd'T'HH:mm:ss"),
+    end: format(end, "yyyy-MM-dd'T'HH:mm:ss"),
+  } as CalendarEvent
+  const segments: GridSegment[] = []
+  days.forEach((day, dayIndex) => {
+    const segment = daySegment(fake, format(day, 'yyyy-MM-dd'))
+    if (segment) segments.push({ dayIndex, startMin: segment.startMin, endMin: segment.endMin })
+  })
+  return segments
 }
 
 export function CalendarPanel() {
@@ -214,6 +364,21 @@ export function CalendarPanel() {
   const [draft, setDraft] = useState<Draft>(emptyDraft)
   const [formError, setFormError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<CalendarImportResult | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [preview, setPreview] = useState<GridSegment[] | null>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [notifyPermission, setNotifyPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
+  )
+  const fileInput = useRef<HTMLInputElement>(null)
+  const gestureRef = useRef<Gesture | null>(null)
+  const suppressClick = useRef(false)
+  const colRefs = useRef<Array<HTMLDivElement | null>>([])
+  const rasterDaysRef = useRef<Date[]>([])
+  const savingRef = useRef(false)
+  const stopListen = useRef<(() => void) | null>(null)
 
   const monthKey = format(cursor, 'yyyy-MM')
   const todayKey = format(new Date(), 'yyyy-MM-dd')
@@ -270,6 +435,23 @@ export function CalendarPanel() {
     const count = mode === 'week' ? 6 : 13
     return eachDayOfInterval({ start, end: addDays(start, count) })
   }, [cursor, mode])
+  rasterDaysRef.current = rasterDays
+  savingRef.current = saving
+
+  useEffect(() => () => stopListen.current?.(), [])
+
+  useEffect(() => {
+    const syncPermission = () => {
+      if (typeof Notification === 'undefined') return
+      setNotifyPermission(Notification.permission)
+    }
+    window.addEventListener('calendar-notify-permission', syncPermission)
+    window.addEventListener('focus', syncPermission)
+    return () => {
+      window.removeEventListener('calendar-notify-permission', syncPermission)
+      window.removeEventListener('focus', syncPermission)
+    }
+  }, [])
 
   const visibleEvents = useMemo(() => {
     const events = list?.events ?? []
@@ -295,6 +477,127 @@ export function CalendarPanel() {
     setEditor('create')
     setDraft({ ...emptyDraft(), start: startValue, end: defaultTimedEnd(startValue) })
     setFormError(null)
+  }
+
+  function openCreateRange(start: Date, end: Date) {
+    setEditor('create')
+    setDraft({
+      ...emptyDraft(),
+      start: format(start, "yyyy-MM-dd'T'HH:mm"),
+      end: format(end, "yyyy-MM-dd'T'HH:mm"),
+    })
+    setFormError(null)
+  }
+
+  function segmentsFor(gesture: Gesture): GridSegment[] | null {
+    if (gesture.kind === 'repeat' || samePoint(gesture.anchor, gesture.current)) return null
+    const days = rasterDaysRef.current
+    if (gesture.kind === 'paint') {
+      const startPoint = pointKey(gesture.anchor) <= pointKey(gesture.current) ? gesture.anchor : gesture.current
+      const endPoint = pointKey(gesture.anchor) <= pointKey(gesture.current) ? gesture.current : gesture.anchor
+      return rangeSegments(pointToDate(days, startPoint), pointToDate(days, endPoint), days)
+    }
+    const delta = pointKey(gesture.current) - pointKey(gesture.anchor)
+    const start = snapWall(addMinutes(parseWall(gesture.event.start), delta))
+    return rangeSegments(start, addMinutes(start, gesture.duration), days)
+  }
+
+  function beginGesture(gesture: Gesture) {
+    if (savingRef.current) return
+    suppressClick.current = true
+    gestureRef.current = gesture
+    setDragId(gesture.kind === 'move' ? gesture.event.id : null)
+    setPreview(segmentsFor(gesture))
+    const move = (event: PointerEvent) => {
+      const active = gestureRef.current
+      if (!active || active.kind === 'repeat') return
+      const point = locate(event.clientX, event.clientY, colRefs.current, rasterDaysRef.current.length)
+      if (!point) return
+      active.current = point
+      setPreview(segmentsFor(active))
+    }
+    const stop = () => {
+      stopListen.current?.()
+      stopListen.current = null
+    }
+    const cancel = () => {
+      gestureRef.current = null
+      setPreview(null)
+      setDragId(null)
+      stop()
+    }
+    const up = (event: PointerEvent) => {
+      const active = gestureRef.current
+      gestureRef.current = null
+      setPreview(null)
+      setDragId(null)
+      stop()
+      if (!active) return
+      if (active.kind === 'repeat') {
+        openEdit(active.event)
+        return
+      }
+      const point = locate(event.clientX, event.clientY, colRefs.current, rasterDaysRef.current.length)
+      if (point) active.current = point
+      if (active.kind === 'paint') {
+        if (samePoint(active.anchor, active.current)) {
+          const day = rasterDaysRef.current[active.anchor.dayIndex]
+          if (day) openCreateAt(day, active.anchor.hour)
+          return
+        }
+        const startPoint = pointKey(active.anchor) <= pointKey(active.current) ? active.anchor : active.current
+        const endPoint = pointKey(active.anchor) <= pointKey(active.current) ? active.current : active.anchor
+        const days = rasterDaysRef.current
+        openCreateRange(pointToDate(days, startPoint), pointToDate(days, endPoint))
+        return
+      }
+      if (samePoint(active.anchor, active.current)) {
+        openEdit(active.event)
+        return
+      }
+      const delta = pointKey(active.current) - pointKey(active.anchor)
+      const start = snapWall(addMinutes(parseWall(active.event.start), delta))
+      void moveEvent(active.event, start, addMinutes(start, active.duration))
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
+    stopListen.current = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', cancel)
+    }
+  }
+
+  function startPaint(event: ReactPointerEvent) {
+    if (event.button !== 0) return
+    event.preventDefault()
+    const point = locate(event.clientX, event.clientY, colRefs.current, rasterDaysRef.current.length)
+    if (!point) return
+    beginGesture({ kind: 'paint', anchor: point, current: point })
+  }
+
+  function startMove(event: ReactPointerEvent, ev: CalendarEvent) {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (ev.repeat) {
+      beginGesture({ kind: 'repeat', event: ev })
+      return
+    }
+    const point = locate(event.clientX, event.clientY, colRefs.current, rasterDaysRef.current.length)
+    if (!point) {
+      suppressClick.current = true
+      openEdit(ev)
+      return
+    }
+    beginGesture({
+      kind: 'move',
+      event: ev,
+      anchor: point,
+      current: point,
+      duration: durationMinutes(ev),
+    })
   }
 
   function eventStyle(ev: CalendarEvent): CSSProperties | undefined {
@@ -338,6 +641,7 @@ export function CalendarPanel() {
       if (editor === 'edit') await api.updateCalendarEvent(draft.id, body)
       else await api.createCalendarEvent(body)
       setEditor(null)
+      refreshCalendarReminders()
       await load()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e))
@@ -354,6 +658,7 @@ export function CalendarPanel() {
     try {
       await api.deleteCalendarEvent(draft.id)
       setEditor(null)
+      refreshCalendarReminders()
       await load()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : String(e))
@@ -362,14 +667,82 @@ export function CalendarPanel() {
     }
   }
 
+  async function moveEvent(ev: CalendarEvent, start: Date, end: Date) {
+    setSaving(true)
+    setError(null)
+    try {
+      const id = (ev.series_id || ev.id).split('~')[0]
+      await api.updateCalendarEvent(id, {
+        title: ev.title,
+        start: format(start, "yyyy-MM-dd'T'HH:mm:ss"),
+        end: format(end, "yyyy-MM-dd'T'HH:mm:ss"),
+        all_day: false,
+        tags: ev.tags,
+        location: ev.location ?? null,
+        notes: ev.notes ?? null,
+        remind_before_minutes: ev.remind_before_minutes ?? null,
+        clear_remind: ev.remind_before_minutes == null,
+      })
+      refreshCalendarReminders()
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function importFile(file: File) {
+    setImporting(true)
+    setImportError(null)
+    try {
+      const result = await api.importCalendar(file)
+      setImportResult(result)
+      refreshCalendarReminders()
+      await load()
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  function chooseRemind(unit: RemindUnit) {
+    setDraft((current) => {
+      if (unit === 'none') return { ...current, remindUnit: 'none', remindAmount: '' }
+      const amount =
+        current.remindUnit === unit && current.remindAmount
+          ? current.remindAmount
+          : unit === 'hours'
+            ? '1'
+            : '15'
+      return { ...current, remindUnit: unit, remindAmount: amount }
+    })
+    if (unit !== 'none') requestCalendarReminderPermission()
+  }
+
   return (
     <section className="panel">
       <h2>Calendar</h2>
-      <p className="lede">Personal events on the Pi (Europe/Berlin). No M365.</p>
+      <p className="lede">Personal events on the Pi. Import an .ics file, a zip of calendars, or an Outlook CSV.</p>
       <div className="panel-actions">
         <button type="button" className="primary" onClick={openCreate}>
           New event
         </button>
+        <button type="button" onClick={() => fileInput.current?.click()} disabled={importing}>
+          {importing ? 'Importing…' : 'Import'}
+        </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept=".ics,.ical,.csv,.zip,text/calendar,text/csv,application/zip"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0]
+            event.target.value = ''
+            if (file) void importFile(file)
+          }}
+        />
         <button
           type="button"
           className={mode === 'week' ? 'primary' : undefined}
@@ -554,6 +927,35 @@ export function CalendarPanel() {
               />
             </label>
           </div>
+          <div className="time-row">
+            <label>
+              Remind before
+              <input
+                type="number"
+                min={1}
+                step={1}
+                disabled={draft.remindUnit === 'none'}
+                value={draft.remindUnit === 'none' ? '' : draft.remindAmount}
+                placeholder={draft.remindUnit === 'none' ? 'None' : '15'}
+                onChange={(event) => {
+                  const remindAmount = event.target.value
+                  setDraft({ ...draft, remindAmount })
+                  if (draft.remindUnit !== 'none' && remindAmount) requestCalendarReminderPermission()
+                }}
+              />
+            </label>
+            <label>
+              Unit
+              <select
+                value={draft.remindUnit}
+                onChange={(event) => chooseRemind(event.target.value as RemindUnit)}
+              >
+                <option value="none">None</option>
+                <option value="minutes">Minutes</option>
+                <option value="hours">Hours</option>
+              </select>
+            </label>
+          </div>
           <label>
             Location
             <input
@@ -610,6 +1012,30 @@ export function CalendarPanel() {
             </button>
           </div>
         </form>
+      )}
+      {notifyPermission === 'denied' && (
+        <div className="error-box">Notifications are blocked in this browser. Events still save.</div>
+      )}
+      {importError && <div className="error-box">{importError}</div>}
+      {importResult && (
+        <div className="muted">
+          <p>
+            Imported {importResult.created} created, {importResult.updated} updated, {importResult.skipped}{' '}
+            skipped.
+          </p>
+          {importResult.repeat_dropped.length > 0 && (
+            <p>
+              Repeat not kept:{' '}
+              {importResult.repeat_dropped.map((issue) => `${issue.title} (${issue.detail})`).join('; ')}
+            </p>
+          )}
+          {importResult.alarm_dropped.length > 0 && (
+            <p>
+              Alarm not kept:{' '}
+              {importResult.alarm_dropped.map((issue) => `${issue.title} (${issue.detail})`).join('; ')}
+            </p>
+          )}
+        </div>
       )}
       <div className="tags" style={{ marginBottom: '0.85rem' }}>
         <button
@@ -686,6 +1112,9 @@ export function CalendarPanel() {
             </div>
           ) : mode === 'week' || mode === 'fortnight' ? (
             <div className="raster">
+              <p className="muted">
+                Drag on empty time to choose a range. Drag an event to move it. Repeating events open for editing.
+              </p>
               <div
                 className="raster-head"
                 style={{ gridTemplateColumns: `52px repeat(${rasterDays.length}, minmax(0, 1fr))` }}
@@ -728,11 +1157,17 @@ export function CalendarPanel() {
                       </div>
                     ))}
                   </div>
-                  {rasterDays.map((day) => {
+                  {rasterDays.map((day, index) => {
                     const key = format(day, 'yyyy-MM-dd')
                     const events = (byDay.get(key) ?? []).filter((ev) => !ev.all_day)
                     return (
-                      <div className={key === todayKey ? 'raster-col today' : 'raster-col'} key={key}>
+                      <div
+                        className={key === todayKey ? 'raster-col today' : 'raster-col'}
+                        key={key}
+                        ref={(node) => {
+                          colRefs.current[index] = node
+                        }}
+                      >
                         {Array.from({ length: 24 }, (_, hour) => (
                           <button
                             key={hour}
@@ -740,7 +1175,15 @@ export function CalendarPanel() {
                             className="raster-slot"
                             style={{ height: HOUR_PX }}
                             aria-label={`New event ${key} ${hour}:00`}
-                            onClick={() => openCreateAt(day, hour)}
+                            onPointerDown={startPaint}
+                            onClick={(event) => {
+                              if (suppressClick.current) {
+                                suppressClick.current = false
+                                event.preventDefault()
+                                return
+                              }
+                              openCreateAt(day, hour)
+                            }}
                           />
                         ))}
                         {events.map((ev) => {
@@ -756,13 +1199,41 @@ export function CalendarPanel() {
                               key={ev.id}
                               type="button"
                               className="raster-event"
-                              style={{ top, height, ...eventStyle(ev) }}
-                              onClick={() => openEdit(ev)}
+                              style={{
+                                top,
+                                height,
+                                opacity: dragId === ev.id ? 0.35 : undefined,
+                                ...eventStyle(ev),
+                              }}
+                              onPointerDown={(event) => startMove(event, ev)}
+                              onClick={(event) => {
+                                if (suppressClick.current) {
+                                  suppressClick.current = false
+                                  event.preventDefault()
+                                  return
+                                }
+                                openEdit(ev)
+                              }}
                             >
                               {eventLabel(ev)}
                             </button>
                           )
                         })}
+                        {preview
+                          ?.filter((segment) => segment.dayIndex === index)
+                          .map((segment) => (
+                            <div
+                              key={`${segment.startMin}-${segment.endMin}`}
+                              className="raster-preview"
+                              style={{
+                                top: (segment.startMin / DAY_MINUTES) * 24 * HOUR_PX,
+                                height: Math.max(
+                                  8,
+                                  ((segment.endMin - segment.startMin) / DAY_MINUTES) * 24 * HOUR_PX,
+                                ),
+                              }}
+                            />
+                          ))}
                       </div>
                     )
                   })}

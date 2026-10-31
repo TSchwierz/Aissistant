@@ -12,13 +12,14 @@ from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Req
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
+from server.auth import ApiKeyMiddleware
 from server.modules.health import nutrition, services
 from server.modules.health.database import get_db, init_db
 from server.modules.health.models import Measurement  # noqa: F401 — register models
-from server.modules.health.scale_scan import scale_status, set_scale_mode
+from server.modules.health.scale_scan import scale_status, set_scale_mode, set_scale_window
 from server.modules.health.schemas import (
     FoodSearchOut,
     IngestResult,
@@ -60,7 +61,7 @@ def mount_health(app: FastAPI) -> None:
     """Attach Health static files + API/dashboard routes to the unified app."""
     app.mount(
         "/static",
-        StaticFiles(directory=str(MODULE_DIR / "static")),
+        ApiKeyMiddleware(StaticFiles(directory=str(MODULE_DIR / "static"))),
         name="health-static",
     )
     app.include_router(router)
@@ -100,17 +101,37 @@ class ScaleModeIn(BaseModel):
     action: str = Field(pattern="^(start|stop|auto)$")
 
 
+class ScaleWindowIn(BaseModel):
+    """Whole hours on one calendar day. Start is inclusive and end is exclusive."""
+
+    start_hour: int = Field(strict=True, ge=0, le=23)
+    end_hour: int = Field(strict=True, ge=0, le=23)
+
+    @model_validator(mode="after")
+    def end_after_start(self) -> ScaleWindowIn:
+        if self.end_hour <= self.start_hour:
+            raise ValueError("end hour must be later than the start hour on the same day")
+        return self
+
+
 @router.get("/api/scale")
 def api_scale() -> dict:
-    """Whether the Pi is listening for the morning scale broadcast."""
+    """Whether the Pi is listening, including start_hour, end_hour, and window."""
     return scale_status()
 
 
 @router.post("/api/scale/mode")
 def post_scale_mode(body: ScaleModeIn) -> dict:
-    """Manual test control. ``start`` scans now, ``stop`` stays quiet, ``auto`` uses 06:00–12:00."""
+    """Manual test control. ``start`` scans now, ``stop`` stays quiet, ``auto`` uses the saved window."""
     mode = {"start": "on", "stop": "off", "auto": "auto"}[body.action]
     set_scale_mode(mode)
+    return scale_status()
+
+
+@router.post("/api/scale/window")
+def post_scale_window(body: ScaleWindowIn) -> dict:
+    """Save the auto-mode listen window. Returns the same payload as GET /api/scale."""
+    set_scale_window(body.start_hour, body.end_hour)
     return scale_status()
 
 

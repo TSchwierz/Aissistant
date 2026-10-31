@@ -46,7 +46,9 @@ _state: dict[str, object] = {
     "phase": "idle",
     "detail": "",
     "recorded_today": False,
-    "window": "06:00-12:00",
+    "window": "08:00-10:00",
+    "start_hour": 8,
+    "end_hour": 10,
     "last_weight_kg": None,
     "last_error": None,
 }
@@ -64,6 +66,77 @@ def _mode_path() -> Path:
 
 def _status_path() -> Path:
     return _data_dir() / "scale_status.json"
+
+
+def _window_path() -> Path:
+    return _data_dir() / "scale_window.json"
+
+
+def _checked_hours(start_hour: object, end_hour: object) -> tuple[int, int]:
+    """Whole hours on one day. Start is inclusive and end is exclusive."""
+    if (
+        isinstance(start_hour, bool)
+        or isinstance(end_hour, bool)
+        or not isinstance(start_hour, int)
+        or not isinstance(end_hour, int)
+    ):
+        raise ValueError("start_hour and end_hour must be whole hours from 0 to 23")
+    if start_hour < 0 or start_hour > 23 or end_hour < 0 or end_hour > 23:
+        raise ValueError("start_hour and end_hour must be whole hours from 0 to 23")
+    if end_hour <= start_hour:
+        raise ValueError("end_hour must be later than start_hour")
+    return start_hour, end_hour
+
+
+def _settings_window() -> tuple[int, int]:
+    """Settings hours when no valid window file is stored. Invalid settings use 08:00–10:00."""
+    settings = get_settings()
+    try:
+        return _checked_hours(
+            int(settings.scale_listen_start_hour),
+            int(settings.scale_listen_end_hour),
+        )
+    except (TypeError, ValueError):
+        return 8, 10
+
+
+def _window_label(start_hour: int, end_hour: int) -> str:
+    return f"{start_hour:02d}:00-{end_hour:02d}:00"
+
+
+def read_scale_window() -> tuple[int, int]:
+    """Persisted listen hours, or Settings when ``scale_window.json`` is absent."""
+    try:
+        raw = json.loads(_window_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return _settings_window()
+    if not isinstance(raw, dict):
+        return _settings_window()
+    try:
+        return _checked_hours(raw.get("start_hour"), raw.get("end_hour"))
+    except ValueError:
+        return _settings_window()
+
+
+def set_scale_window(start_hour: int, end_hour: int) -> tuple[int, int]:
+    """Store the auto-mode window beside ``scale_mode.json``."""
+    start, end = _checked_hours(start_hour, end_hour)
+    path = _window_path()
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps({"start_hour": start, "end_hour": end}),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return start, end
+
+
+def _with_window(state: dict) -> dict:
+    start_hour, end_hour = read_scale_window()
+    state["start_hour"] = start_hour
+    state["end_hour"] = end_hour
+    state["window"] = _window_label(start_hour, end_hour)
+    return state
 
 
 def read_scale_mode() -> str:
@@ -91,13 +164,13 @@ def scale_status() -> dict:
         data = json.loads(_status_path().read_text(encoding="utf-8"))
         if isinstance(data, dict):
             data["mode"] = read_scale_mode()
-            return data
+            return _with_window(data)
     except (OSError, json.JSONDecodeError):
         pass
     with _state_lock:
         state = dict(_state)
     state["mode"] = read_scale_mode()
-    return state
+    return _with_window(state)
 
 
 def _set_state(**kwargs: object) -> None:
@@ -187,9 +260,8 @@ def _ingest(reading: ScaleReading, when: datetime, *, replace: bool) -> bool:
 
 def _listen_context() -> dict[str, object]:
     settings = get_settings()
-    start_hour = int(settings.scale_listen_start_hour)
-    end_hour = int(settings.scale_listen_end_hour)
-    window = f"{start_hour:02d}:00-{end_hour:02d}:00"
+    start_hour, end_hour = read_scale_window()
+    window = _window_label(start_hour, end_hour)
     mode = read_scale_mode()
     tz = ZoneInfo(settings.timezone)
     now = datetime.now(tz)
@@ -201,6 +273,8 @@ def _listen_context() -> dict[str, object]:
             "detail": "PA_SCALE_SCAN_ENABLED is off",
             "recorded": False,
             "window": window,
+            "start_hour": start_hour,
+            "end_hour": end_hour,
             "mode": mode,
             "tz": tz,
         }
@@ -227,6 +301,8 @@ def _listen_context() -> dict[str, object]:
         "detail": detail,
         "recorded": recorded,
         "window": window,
+        "start_hour": start_hour,
+        "end_hour": end_hour,
         "mode": mode,
         "tz": tz,
     }
@@ -238,6 +314,8 @@ def _publish(ctx: dict[str, object], **kwargs: object) -> None:
         "enabled": ctx["enabled"],
         "recorded_today": ctx["recorded"],
         "window": ctx["window"],
+        "start_hour": ctx["start_hour"],
+        "end_hour": ctx["end_hour"],
         "mode": ctx["mode"],
     }
     payload.update(kwargs)
@@ -406,12 +484,12 @@ async def _scan_while_requested() -> None:
 
 
 async def _serve() -> None:
-    settings = get_settings()
+    start_hour, end_hour = read_scale_window()
     logger.info(
         "Scale scanner started (cycle=%ss, window=%02d:00-%02d:00)",
         _CYCLE_SECONDS,
-        settings.scale_listen_start_hour,
-        settings.scale_listen_end_hour,
+        start_hour,
+        end_hour,
     )
     while not _stop.is_set():
         ctx = _listen_context()

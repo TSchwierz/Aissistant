@@ -93,10 +93,13 @@ class Settings(BaseSettings):
 
     app_name: str = "Personal AIssistent"
     timezone: str = "Europe/Berlin"
-    # LAN-trusted home network: no auth in Phase 0/1. Bind to all interfaces
-    # only when the Pi sits on a trusted LAN; prefer 127.0.0.1 for local dev.
+    # Bind to all interfaces only when the Pi sits on a trusted LAN;
+    # prefer 127.0.0.1 for local dev.
     host: str = "127.0.0.1"
     port: int = 8741
+    # Required for every HTTP route. Env: PA_API_KEY.
+    # Empty refuses process start. It does not mean open access.
+    api_key: str = ""
     language: str = "en"
     # Empty means the stable directory outside the git checkout.
     # Set PA_DATA_DIR to keep databases somewhere else (including ./data).
@@ -121,8 +124,8 @@ class Settings(BaseSettings):
 
     # Morning BLE scale listen (Pi). Inclusive start hour, exclusive end hour, local time.
     scale_scan_enabled: bool = True
-    scale_listen_start_hour: int = 6
-    scale_listen_end_hour: int = 12
+    scale_listen_start_hour: int = 8
+    scale_listen_end_hour: int = 10
     scale_scan_tick_seconds: int = 30
     scale_scan_timeout_seconds: int = 12
 

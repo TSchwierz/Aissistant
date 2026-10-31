@@ -77,6 +77,8 @@ class EventRow:
     repeat_rule: str | None = None
     repeat_until: date | None = None
     repeat_weekdays: list[int] = field(default_factory=list)
+    remind_before_minutes: int | None = None
+    ics_uid: str | None = None
 
 
 class CalendarDB:
@@ -111,7 +113,12 @@ class CalendarDB:
                     location TEXT,
                     notes TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    repeat_rule TEXT,
+                    repeat_until TEXT,
+                    repeat_weekdays TEXT,
+                    remind_before_minutes INTEGER,
+                    ics_uid TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_at);
                 CREATE INDEX IF NOT EXISTS idx_events_end ON events(end_at);
@@ -132,6 +139,17 @@ class CalendarDB:
                 conn.execute("ALTER TABLE events ADD COLUMN repeat_until TEXT")
             if "repeat_weekdays" not in columns:
                 conn.execute("ALTER TABLE events ADD COLUMN repeat_weekdays TEXT")
+            if "remind_before_minutes" not in columns:
+                conn.execute("ALTER TABLE events ADD COLUMN remind_before_minutes INTEGER")
+            if "ics_uid" not in columns:
+                conn.execute("ALTER TABLE events ADD COLUMN ics_uid TEXT")
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ics_uid
+                ON events(ics_uid)
+                WHERE ics_uid IS NOT NULL
+                """
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS tag_colors (
@@ -169,6 +187,10 @@ class CalendarDB:
             repeat_weekdays=parse_weekdays(row["repeat_weekdays"])
             if "repeat_weekdays" in row.keys()
             else [],
+            remind_before_minutes=int(row["remind_before_minutes"])
+            if "remind_before_minutes" in row.keys() and row["remind_before_minutes"] is not None
+            else None,
+            ics_uid=(row["ics_uid"] or None) if "ics_uid" in row.keys() else None,
         )
 
     def _tags_for(self, conn: sqlite3.Connection, event_ids: list[str]) -> dict[str, list[str]]:
@@ -218,6 +240,8 @@ class CalendarDB:
         repeat_rule: str | None = None,
         repeat_until: date | None = None,
         repeat_weekdays: list[int] | None = None,
+        remind_before_minutes: int | None = None,
+        ics_uid: str | None = None,
     ) -> EventRow:
         eid = event_id or new_event_id()
         now = utc_now()
@@ -226,8 +250,9 @@ class CalendarDB:
                 """
                 INSERT INTO events(
                     id, title, start_at, end_at, all_day, location, notes,
-                    created_at, updated_at, repeat_rule, repeat_until, repeat_weekdays
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, updated_at, repeat_rule, repeat_until, repeat_weekdays,
+                    remind_before_minutes, ics_uid
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     eid,
@@ -242,6 +267,8 @@ class CalendarDB:
                     repeat_rule,
                     repeat_until.isoformat() if repeat_until else None,
                     format_weekdays(repeat_weekdays),
+                    remind_before_minutes,
+                    ics_uid or None,
                 ),
             )
             self._set_tags(conn, eid, tags)
@@ -273,6 +300,8 @@ class CalendarDB:
         repeat_rule: str | None = ...,  # type: ignore[assignment]
         repeat_until: date | None = ...,  # type: ignore[assignment]
         repeat_weekdays: list[int] | None = ...,  # type: ignore[assignment]
+        remind_before_minutes: int | None = ...,  # type: ignore[assignment]
+        ics_uid: str | None = ...,  # type: ignore[assignment]
     ) -> EventRow | None:
         existing = self.get_event(event_id)
         if existing is None:
@@ -288,6 +317,12 @@ class CalendarDB:
         new_repeat = existing.repeat_rule if repeat_rule is ... else repeat_rule
         new_until = existing.repeat_until if repeat_until is ... else repeat_until
         new_days = existing.repeat_weekdays if repeat_weekdays is ... else (repeat_weekdays or [])
+        new_remind = (
+            existing.remind_before_minutes
+            if remind_before_minutes is ...
+            else remind_before_minutes
+        )
+        new_uid = existing.ics_uid if ics_uid is ... else (ics_uid or None)
 
         with self.connect() as conn:
             conn.execute(
@@ -295,7 +330,8 @@ class CalendarDB:
                 UPDATE events SET
                     title = ?, start_at = ?, end_at = ?, all_day = ?,
                     location = ?, notes = ?, updated_at = ?,
-                    repeat_rule = ?, repeat_until = ?, repeat_weekdays = ?
+                    repeat_rule = ?, repeat_until = ?, repeat_weekdays = ?,
+                    remind_before_minutes = ?, ics_uid = ?
                 WHERE id = ?
                 """,
                 (
@@ -309,6 +345,8 @@ class CalendarDB:
                     new_repeat,
                     new_until.isoformat() if new_until else None,
                     format_weekdays(new_days) if new_repeat else None,
+                    new_remind,
+                    new_uid,
                     event_id,
                 ),
             )
@@ -317,6 +355,50 @@ class CalendarDB:
             tags_map = self._tags_for(conn, [event_id])
             row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
         return self._row_to_event(row, tags_map.get(event_id, []))
+
+    def get_event_by_uid(self, uid: str) -> EventRow | None:
+        if not uid:
+            return None
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM events WHERE ics_uid = ? ORDER BY id ASC LIMIT 1",
+                (uid,),
+            ).fetchone()
+            if row is None:
+                return None
+            event_id = str(row["id"])
+            tags = self._tags_for(conn, [event_id]).get(event_id, [])
+        return self._row_to_event(row, tags)
+
+    def find_event_by_slot(
+        self, title: str, start: datetime, end: datetime | None
+    ) -> EventRow | None:
+        start_iso = to_iso(start)
+        end_iso = to_iso(end) if end else None
+        with self.connect() as conn:
+            if end_iso is None:
+                row = conn.execute(
+                    """
+                    SELECT * FROM events
+                    WHERE title = ? AND start_at = ? AND end_at IS NULL
+                    ORDER BY id ASC LIMIT 1
+                    """,
+                    (title, start_iso),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT * FROM events
+                    WHERE title = ? AND start_at = ? AND end_at = ?
+                    ORDER BY id ASC LIMIT 1
+                    """,
+                    (title, start_iso, end_iso),
+                ).fetchone()
+            if row is None:
+                return None
+            event_id = str(row["id"])
+            tags = self._tags_for(conn, [event_id]).get(event_id, [])
+        return self._row_to_event(row, tags)
 
     def delete_event(self, event_id: str) -> bool:
         with self.connect() as conn:

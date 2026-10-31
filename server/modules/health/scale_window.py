@@ -12,10 +12,10 @@ def scan_requested(
     mode: str,
     hour: int,
     recorded_today: bool,
-    start_hour: int = 6,
-    end_hour: int = 12,
+    start_hour: int = 8,
+    end_hour: int = 10,
 ) -> bool:
-    """Manual test override, otherwise the morning window.
+    """Manual test override, otherwise the configured window.
 
     ``on`` scans even outside the window and after today's reading is stored.
     ``off`` stays quiet. ``auto`` uses :func:`should_listen`.
@@ -36,10 +36,10 @@ def should_listen(
     *,
     hour: int,
     recorded_today: bool,
-    start_hour: int = 6,
-    end_hour: int = 12,
+    start_hour: int = 8,
+    end_hour: int = 10,
 ) -> bool:
-    """Listen only inside the morning window, and only until today's reading exists.
+    """Listen only inside the configured window, and only until today's reading exists.
 
     ``start_hour`` is inclusive and ``end_hour`` is exclusive, in local time.
     """

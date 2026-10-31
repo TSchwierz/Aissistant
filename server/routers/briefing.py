@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from server.modules.briefing import compose_morning_brief
+from server.modules.briefing.store import resolve_morning_brief
 
 router = APIRouter(prefix="/briefing", tags=["briefing"])
 
@@ -20,11 +20,14 @@ def get_morning_brief(
     ),
     refresh: bool = Query(
         default=False,
-        description="Bust the short-lived in-memory cache and recompose.",
+        description=(
+            "Compose again. For today, replace the stored morning brief. "
+            "Any other date is composed on demand and is not stored."
+        ),
     ),
 ) -> JSONResponse:
-    """Compose English radio-style morning brief. Skip missing sections; never abort."""
-    response = compose_morning_brief(date_param=date_param, refresh=refresh)
+    """English radio-style morning brief. Today is the file on disk."""
+    response = resolve_morning_brief(date_param=date_param, refresh=refresh)
     return JSONResponse(content=response.model_dump_response())
 
 
@@ -33,5 +36,5 @@ def get_morning_brief_latest(
     refresh: bool = Query(default=False),
 ) -> JSONResponse:
     """Alias for today's brief with no date query."""
-    response = compose_morning_brief(date_param=None, refresh=refresh)
+    response = resolve_morning_brief(date_param=None, refresh=refresh)
     return JSONResponse(content=response.model_dump_response())

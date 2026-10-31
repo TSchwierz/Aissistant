@@ -40,6 +40,7 @@ import com.healthscale.app.api.HealthProfile
 import com.healthscale.app.api.HealthSnapshot
 import com.healthscale.app.api.HubClient
 import com.healthscale.app.api.ScaleListener
+import com.healthscale.app.api.ScaleWindowClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -85,9 +86,11 @@ fun HealthPane(baseUrl: String) {
 @Composable
 private fun HealthDashboard(baseUrl: String) {
     val client = remember { HubClient() }
+    val windows = remember { ScaleWindowClient() }
     val scope = rememberCoroutineScope()
     var snap by remember { mutableStateOf<HealthSnapshot?>(null) }
     var listener by remember { mutableStateOf<ScaleListener?>(null) }
+    var listenWindow by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
@@ -103,6 +106,7 @@ private fun HealthDashboard(baseUrl: String) {
             problems += it.message ?: "Could not load the scale"
             listener
         }
+        listenWindow = runCatching { windows.status(baseUrl).window }.getOrElse { listenWindow }
         error = problems.joinToString("\n").ifBlank { null }
         loading = false
     }
@@ -134,9 +138,14 @@ private fun HealthDashboard(baseUrl: String) {
     }
 
     val mode = listener?.mode ?: "auto"
+    val listenRange = spokenWindow(listenWindow)
     SectionColumn {
         Text(
-            "The Pi records the scale from 06:00 to 12:00, then stops for the day.",
+            if (listenRange == null) {
+                "The Pi records the scale during the saved morning window, then stops for the day."
+            } else {
+                "The Pi records the scale from $listenRange, then stops for the day."
+            },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         FlowRow(
@@ -436,6 +445,15 @@ private fun HealthProfilePane(baseUrl: String) {
             enabled = !saving,
         ) { Text(if (saving) "Saving…" else "Save") }
     }
+}
+
+private fun spokenWindow(windowLabel: String?): String? {
+    if (windowLabel.isNullOrBlank()) return null
+    val parts = windowLabel.split("-", limit = 2)
+    if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) {
+        return "${parts[0]} to ${parts[1]}"
+    }
+    return windowLabel
 }
 
 @Composable

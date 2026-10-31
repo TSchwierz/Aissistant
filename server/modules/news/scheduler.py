@@ -18,6 +18,16 @@ _thread: threading.Thread | None = None
 
 
 def _tick() -> None:
+    # Once a minute: write today's brief at 04:00 local time if it is missing
+    # or was generated earlier than 04:00. Later digest runs refresh the file
+    # themselves. A brief failure must not skip the news jobs.
+    try:
+        from server.modules.briefing.store import pregenerate_morning_brief_if_due
+
+        pregenerate_morning_brief_if_due()
+    except Exception:  # noqa: BLE001
+        logger.exception("Morning brief pre-generation failed")
+
     db = get_news_db()
     for topic in db.list_topics():
         try:

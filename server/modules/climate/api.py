@@ -5,9 +5,12 @@ from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from server.auth import install_api_key_middleware, require_api_key
+from server.config import get_settings
 
 from .advisor import AdvisorStore
 from .collector import create_weather_service, default_settings
@@ -34,6 +37,7 @@ from .weather import (
 )
 
 FORECAST_WINDOW_HOURS = 4
+HOURLY_FORECAST_HOURS = 24
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +139,34 @@ def _forecast_point_json(point: ForecastPoint) -> dict[str, Any]:
     }
 
 
+def _hourly_point_json(point: ForecastPoint) -> dict[str, Any]:
+    payload = _forecast_point_json(point)
+    payload["fetched_at"] = to_iso(point.fetched_at) if point.fetched_at else None
+    return payload
+
+
+def _forecast_zone() -> ZoneInfo:
+    """Hourly window is evaluated in settings.timezone (default Europe/Berlin)."""
+    name = (get_settings().timezone or "").strip() or "Europe/Berlin"
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo("Europe/Berlin")
+
+
+def _hourly_window(now: datetime, zone: ZoneInfo) -> tuple[datetime, datetime]:
+    """Current local hour, through 24 hours later.
+
+    The start is the current hour in ``zone``. The end is that instant plus
+    24 hours and is exclusive, so a complete series is 24 stored hours.
+    Both bounds stay absolute instants. Hours the database does not have
+    are omitted; nothing is interpolated.
+    """
+    local = now.astimezone(zone)
+    start = local.replace(minute=0, second=0, microsecond=0)
+    return start, start + timedelta(hours=HOURLY_FORECAST_HOURS)
+
+
 def _summary_json(summary: dict[str, Any] | None) -> dict[str, Any] | None:
     if summary is None:
         return None
@@ -195,6 +227,7 @@ def _rolling_from_db(db: ClimateDB, settings: dict[str, Any]) -> dict[str, Any] 
 
 
 def create_app(cfg: AppConfig | None = None) -> FastAPI:
+    require_api_key()
     from server.modules.climate.runtime import get_runtime, init_runtime
 
     rt = get_runtime()
@@ -205,6 +238,7 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
     advisor = rt.advisor
 
     app = FastAPI(title="Studio Climate Monitor", version="0.1.0")
+    install_api_key_middleware(app)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
@@ -219,19 +253,6 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    def require_write_token(
-        x_api_token: str | None = Header(default=None, alias="X-API-Token"),
-        authorization: str | None = Header(default=None),
-    ) -> None:
-        expected = cfg.api_token
-        if not expected:
-            return
-        provided = x_api_token
-        if not provided and authorization and authorization.lower().startswith("bearer "):
-            provided = authorization[7:].strip()
-        if provided != expected:
-            raise HTTPException(status_code=401, detail="Invalid or missing API token")
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -392,6 +413,20 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
     def outside() -> dict[str, Any]:
         return outside_payload()
 
+    @app.get("/outside/hourly")
+    def outside_hourly() -> dict[str, Any]:
+        now = utc_now()
+        zone = _forecast_zone()
+        start, end = _hourly_window(now, zone)
+        points = [p for p in db.list_forecast(start=start) if p.ts < end]
+        return {
+            "timezone": zone.key,
+            "window_hours": HOURLY_FORECAST_HOURS,
+            "from": to_iso(start),
+            "to": to_iso(end),
+            "points": [_hourly_point_json(p) for p in points],
+        }
+
     @app.get("/outside/measurements")
     def outside_measurements(
         from_: str | None = Query(default=None, alias="from"),
@@ -407,7 +442,7 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
         }
 
     @app.post("/outside/refresh")
-    def refresh_outside(_: None = Depends(require_write_token)) -> dict[str, Any]:
+    def refresh_outside() -> dict[str, Any]:
         if weather is None:
             raise HTTPException(status_code=409, detail="Weather polling is disabled")
         snapshot = weather.refresh()
@@ -426,10 +461,7 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
         return _typed_settings(db.get_settings())
 
     @app.put("/settings")
-    def put_settings(
-        body: SettingsUpdate,
-        _: None = Depends(require_write_token),
-    ) -> dict[str, Any]:
+    def put_settings(body: SettingsUpdate) -> dict[str, Any]:
         updates = body.model_dump(exclude_none=True)
         if not updates:
             raise HTTPException(status_code=400, detail="No settings provided")
@@ -533,11 +565,7 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
         return {"tags": db.list_tag_catalog()}
 
     @app.patch("/incidents/{incident_id}")
-    def patch_incident(
-        incident_id: int,
-        body: IncidentUpdate,
-        _: None = Depends(require_write_token),
-    ) -> dict[str, Any]:
+    def patch_incident(incident_id: int, body: IncidentUpdate) -> dict[str, Any]:
         incident = db.get_incident(incident_id)
         if incident is None:
             raise HTTPException(status_code=404, detail="Incident not found")
@@ -586,17 +614,11 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
         return {"markdown": advisor.read_markdown("strategies.md")}
 
     @app.put("/advisor/info")
-    def put_advisor_info(
-        body: MarkdownUpdate,
-        _: None = Depends(require_write_token),
-    ) -> dict[str, str]:
+    def put_advisor_info(body: MarkdownUpdate) -> dict[str, str]:
         return {"markdown": advisor.write_markdown("info.md", body.markdown)}
 
     @app.put("/advisor/strategies")
-    def put_advisor_strategies(
-        body: MarkdownUpdate,
-        _: None = Depends(require_write_token),
-    ) -> dict[str, str]:
+    def put_advisor_strategies(body: MarkdownUpdate) -> dict[str, str]:
         return {"markdown": advisor.write_markdown("strategies.md", body.markdown)}
 
     return app

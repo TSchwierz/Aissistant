@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, getApiBase } from './api'
 import { BriefPanel } from './panels/BriefPanel'
-import { CalendarPanel } from './panels/CalendarPanel'
+import { CalendarReminders } from './calendarReminders'
+import { CalendarPanel } from './panels/CalendarPanel.tsx'
 import { ClimatePanel } from './panels/ClimatePanel'
 import { HealthPanel } from './panels/HealthPanel'
 import { NewsPanel } from './panels/NewsPanel'
@@ -64,6 +65,7 @@ export default function App() {
 
   return (
     <div className="app-frame">
+      <CalendarReminders />
       <aside id="app-sidebar" className={navOpen ? 'sidebar open' : 'sidebar'}>
         <div className="brand">
           <h1>Personal AIssistent</h1>

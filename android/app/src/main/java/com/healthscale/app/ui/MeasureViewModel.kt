@@ -176,15 +176,24 @@ class MeasureViewModel(private val app: HealthScaleApp) : ViewModel() {
         }
     }
 
-    fun testConnection() {
+    fun saveApiKey(key: String) {
         viewModelScope.launch {
+            app.settings.setApiKey(key)
+            _state.update { it.copy(syncMessage = "API key saved") }
+        }
+    }
+
+    fun testConnection(url: String = _state.value.serverUrl, apiKey: String? = null) {
+        viewModelScope.launch {
+            if (apiKey != null) app.settings.setApiKey(apiKey)
+            val base = url.trim().trimEnd('/').ifBlank { _state.value.serverUrl }
             _state.update { it.copy(syncMessage = "Testing…") }
-            val result = sync.testConnection(_state.value.serverUrl)
+            val result = sync.testConnection(base)
             _state.update {
                 it.copy(
                     syncMessage = result.fold(
                         onSuccess = { "Connected: $it" },
-                        onFailure = { e -> "Failed: ${e.message}" },
+                        onFailure = { error -> connectionFailure(error) },
                     ),
                 )
             }
@@ -219,6 +228,14 @@ class MeasureViewModel(private val app: HealthScaleApp) : ViewModel() {
             },
         )
     }
+}
+
+private fun connectionFailure(error: Throwable): String {
+    val text = error.message.orEmpty()
+    if (text.contains("401") || text.contains("API key rejected", ignoreCase = true)) {
+        return "Auth failed: API key rejected"
+    }
+    return "Failed: ${text.ifBlank { "Connection failed" }}"
 }
 
 class MeasureViewModelFactory(private val app: HealthScaleApp) : ViewModelProvider.Factory {

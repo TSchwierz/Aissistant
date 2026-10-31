@@ -9,7 +9,14 @@ from zoneinfo import ZoneInfo
 
 from server.config import get_settings
 from server.modules.calendar.db import CalendarDB, EventRow, get_calendar_db, to_iso
-from server.modules.calendar.schemas import EventCreate, EventOut, EventUpdate
+from server.modules.calendar.importers import read_upload
+from server.modules.calendar.schemas import (
+    EventCreate,
+    EventOut,
+    EventUpdate,
+    ImportIssue,
+    ImportResult,
+)
 
 
 def _tz() -> ZoneInfo:
@@ -58,6 +65,8 @@ def _event_out(
         repeat=row.repeat_rule,
         repeat_until=row.repeat_until.isoformat() if row.repeat_until else None,
         repeat_weekdays=list(row.repeat_weekdays),
+        remind_before_minutes=row.remind_before_minutes,
+        ics_uid=row.ics_uid,
     )
 
 
@@ -231,6 +240,7 @@ def create_event(body: EventCreate, db: CalendarDB | None = None) -> EventOut:
         repeat_rule=body.repeat,
         repeat_until=body.repeat_until,
         repeat_weekdays=body.repeat_weekdays if body.repeat else None,
+        remind_before_minutes=body.remind_before_minutes,
     )
     return event_to_out(row)
 
@@ -281,6 +291,10 @@ def update_event(
             kwargs["repeat_until"] = None
         elif body.repeat_until is not None:
             kwargs["repeat_until"] = body.repeat_until
+    if body.remind_before_minutes is not None:
+        kwargs["remind_before_minutes"] = body.remind_before_minutes
+    elif body.clear_remind:
+        kwargs["remind_before_minutes"] = None
 
     # Validate end >= start after merge
     existing = db.get_event(event_id)
@@ -425,6 +439,60 @@ def list_tag_colors(db: CalendarDB | None = None) -> dict[str, str]:
 def set_tag_color(tag: str, color: str, db: CalendarDB | None = None) -> None:
     db = db or get_calendar_db()
     db.set_tag_color(tag, color)
+
+
+def import_file(filename: str, raw: bytes, db: CalendarDB | None = None) -> ImportResult:
+    db = db or get_calendar_db()
+    batch = read_upload(filename, raw, _tz())
+    result = ImportResult(skipped=batch.skipped)
+    for item in batch.events:
+        if item.uid:
+            existing = db.get_event_by_uid(item.uid)
+        elif item.match_slot:
+            existing = db.find_event_by_slot(item.title, item.start, item.end)
+        else:
+            existing = None
+        fields = dict(
+            title=item.title,
+            start=item.start,
+            end=item.end,
+            all_day=item.all_day,
+            location=item.location,
+            notes=item.notes,
+            tags=item.tags,
+            repeat_rule=item.repeat,
+            repeat_until=item.repeat_until,
+            repeat_weekdays=item.repeat_weekdays,
+            remind_before_minutes=item.remind_before_minutes,
+            ics_uid=item.uid,
+        )
+        if existing is None:
+            db.create_event(**fields)
+            result.created += 1
+        elif item.uid:
+            db.update_event(existing.id, **fields)
+            result.updated += 1
+        else:
+            db.update_event(
+                existing.id,
+                title=item.title,
+                start=item.start,
+                end=item.end,
+                all_day=item.all_day,
+                location=item.location,
+                notes=item.notes,
+                tags=item.tags,
+            )
+            result.updated += 1
+        if item.repeat_note:
+            result.repeat_dropped.append(
+                ImportIssue(title=item.title, uid=item.uid, detail=item.repeat_note)
+            )
+        if item.alarm_note:
+            result.alarm_dropped.append(
+                ImportIssue(title=item.title, uid=item.uid, detail=item.alarm_note)
+            )
+    return result
 
 
 def startup_calendar() -> None:

@@ -1,11 +1,14 @@
 package com.healthscale.app.ui
 
 import android.content.Intent
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -19,8 +22,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.healthscale.app.HealthScaleApp
 import com.healthscale.app.MorningBriefActivity
 
 @Composable
@@ -28,10 +34,14 @@ fun SettingsScreen(vm: MeasureViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     var url by remember(state.serverUrl) { mutableStateOf(state.serverUrl) }
     val context = LocalContext.current
+    val app = context.applicationContext as HealthScaleApp
+    val savedKey by app.settings.apiKey.collectAsStateWithLifecycle(initialValue = "")
+    var apiKey by remember(savedKey) { mutableStateOf(savedKey) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -54,6 +64,16 @@ fun SettingsScreen(vm: MeasureViewModel) {
             modifier = Modifier.fillMaxWidth(),
         )
 
+        OutlinedTextField(
+            value = apiKey,
+            onValueChange = { apiKey = it },
+            label = { Text("API key") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            modifier = Modifier.fillMaxWidth(),
+        )
+
         Button(
             onClick = {
                 vm.saveServerUrl(url)
@@ -63,10 +83,17 @@ fun SettingsScreen(vm: MeasureViewModel) {
             Text("Save URL")
         }
 
+        Button(
+            onClick = { vm.saveApiKey(apiKey) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Save API key")
+        }
+
         OutlinedButton(
             onClick = {
                 vm.saveServerUrl(url)
-                vm.testConnection()
+                vm.testConnection(url, apiKey)
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -89,6 +116,8 @@ fun SettingsScreen(vm: MeasureViewModel) {
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
+
+        ScaleListenWindowSettings(state.serverUrl.trim())
 
         OutlinedButton(
             onClick = {
