@@ -7,6 +7,7 @@ description: A file listing current issues that should be fixed. When completing
 # Calendar
 
 # Health
+- When making a second manual measurement on a day, there should be an option to choose if it overwrites the saved value for today
 
 # Mobile
 
