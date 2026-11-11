@@ -96,7 +96,7 @@ fun SettingsPane(url: String, onSaveUrl: (String) -> Unit) {
     SectionColumn {
         Text("Settings", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Pi server, API key, backup, and appearance for this phone. The key stays on this phone.",
+            "Pi server, API key, app update, backup, and appearance for this phone. The key stays on this phone.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         OutlinedTextField(
@@ -152,6 +152,8 @@ fun SettingsPane(url: String, onSaveUrl: (String) -> Unit) {
             }
         }) { Text("Download backup") }
         if (!message.isNullOrBlank()) Text(message!!)
+
+        AppUpdateSection(url.trim())
 
         ScaleListenWindowSettings(url.trim())
 

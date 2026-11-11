@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-11
+
+### Phone
+
+Settings can install a newer build from the Pi. `GET /app/release` describes the APK in `<PA_DATA_DIR>/android/`, and `GET /app/apk` sends `HealthScale.apk`. The phone downloads it when `versionCode` is higher, checks the SHA-256, and opens the Android installer. The install still needs a confirmation. The build script writes `android/dist/release.json` next to the APK. This build is versionCode 5 (`1.2.0`), so it can replace the previous sideload.
+
 ## 2026-10-30
 
 ### Climate

@@ -14,6 +14,25 @@ function Write-Step([string]$Message) {
     Write-Host "==> $Message"
 }
 
+function Write-ReleaseJson([string]$ApkPath, [string]$ReleasePath, [string]$BuildToolsDir) {
+    $aapt = Join-Path $BuildToolsDir "aapt.exe"
+    if (-not (Test-Path $aapt)) { $aapt = Join-Path $BuildToolsDir "aapt2.exe" }
+    if (-not (Test-Path $aapt)) { throw "aapt was not found in $BuildToolsDir." }
+    $badging = & $aapt dump badging $ApkPath 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "aapt could not read the APK version.`n$badging" }
+    $text = ($badging | Out-String)
+    if ($text -notmatch "versionCode='(?<code>[0-9]+)'") { throw "APK versionCode was not found." }
+    $versionCode = [int]$Matches.code
+    if ($text -notmatch "versionName='(?<name>[^']*)'") { throw "APK versionName was not found." }
+    $versionName = $Matches.name
+    if ([string]::IsNullOrWhiteSpace($versionName)) { throw "APK versionName is empty." }
+    $sha = (Get-FileHash -Algorithm SHA256 -Path $ApkPath).Hash.ToLowerInvariant()
+    $escapedName = $versionName.Replace('\', '\\').Replace('"', '\"')
+    $json = "{`"versionCode`":$versionCode,`"versionName`":`"$escapedName`",`"sha256`":`"$sha`",`"apk`":`"HealthScale.apk`"}`n"
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($ReleasePath, $json, $utf8)
+}
+
 function Test-Jdk17([string]$JavaHome) {
     $java = Join-Path $JavaHome "bin\java.exe"
     if (-not (Test-Path $java)) { return $false }
@@ -200,11 +219,20 @@ if ($LASTEXITCODE -ne 0) { throw "The APK was built but its signature does not v
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 $dest = Join-Path $DistDir "HealthScale.apk"
 Copy-Item $apk $dest -Force
+$releasePath = Join-Path $DistDir "release.json"
+Write-ReleaseJson $dest $releasePath $buildTools.FullName
 
 Write-Host ""
 Write-Host "APK ready: $dest"
+Write-Host "Release:   $releasePath"
 Write-Host ""
-Write-Host "USB install:"
+Write-Host "First install (USB):"
 Write-Host "  1. Plug in the phone and choose File transfer in the USB notification."
 Write-Host "  2. Copy HealthScale.apk into the phone's Download folder."
 Write-Host "  3. On the phone, open Files and tap the APK. Allow Install unknown apps if asked."
+Write-Host ""
+Write-Host "Later updates (phone pulls from the Pi):"
+Write-Host "  1. Raise versionCode in android\app\build.gradle.kts and build again."
+Write-Host "  2. Copy HealthScale.apk and release.json to the Pi data directory:"
+Write-Host "     ~/.local/share/personal-aissistent/android/"
+Write-Host "  3. On the phone, open Settings and tap Update. Confirm the install."

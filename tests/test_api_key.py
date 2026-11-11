@@ -24,6 +24,7 @@ PATHS = (
     "/briefing/morning",
     "/calendar/weeks",
     "/backup",
+    "/app/release",
     "/climate/health",
     "/api/health",
     "/static/styles.css",

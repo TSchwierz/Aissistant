@@ -97,13 +97,13 @@ A left sidebar holds Morning brief, Calendar, Climate, Health, News, and Setting
 | Climate | Current indoor DHT11 reading, or a warning when the sensor is not reporting. The 4-hour outside summary stays on the dashboard. A Forecast tab charts the next 24 stored hours. History for 12 hours, 24 hours, 7 days, or 30 days. Outside providers. Temperature and humidity bands, and the sample interval |
 | Health | Scale listener (start, stop, schedule), latest weight and body composition, charts, measurements, meals and calories, profile and targets |
 | News | Topics and the latest digests |
-| Settings | Pi URL, API key, scale listen window, connection test, backup download, theme |
+| Settings | Pi URL, API key, scale listen window, connection test, backup download, app update, theme |
 
 The Vite app lives in [`web/`](web/).
 
 ## Android
 
-Package `com.healthscale.app`. The drawer matches the PC: Brief, Calendar, Climate, Health, News, Settings. The scale is read by the Pi. Health includes the scale controls, measurements, meals (including a camera for a barcode or a photo), and profile. Climate has the same history ranges as the PC, plus the 24-hour Forecast tab. Calendar editing matches the PC, including file import and one reminder per event. The phone keeps events that overlap today through the next 7 days in the Pi timezone and shows that copy when the server cannot be reached. Creates, edits, and deletes still need the server. Reminders in that window are scheduled as Android notifications and fire while the app is closed. Settings stores the Pi URL, the API key, the scale listen window, theme, and backup download.
+Package `com.healthscale.app`. The drawer matches the PC: Brief, Calendar, Climate, Health, News, Settings. The scale is read by the Pi. Health includes the scale controls, measurements, meals (including a camera for a barcode or a photo), and profile. Climate has the same history ranges as the PC, plus the 24-hour Forecast tab. Calendar editing matches the PC, including file import and one reminder per event. The phone keeps events that overlap today through the next 7 days in the Pi timezone and shows that copy when the server cannot be reached. Creates, edits, and deletes still need the server. Reminders in that window are scheduled as Android notifications and fire while the app is closed. Settings stores the Pi URL, the API key, the scale listen window, theme, and backup download. When the Pi has a higher `versionCode`, Settings downloads that APK and opens the Android installer. Android still asks you to confirm.
 
 Morning brief is still the Modes & Routines entry. See [`android/README.md`](android/README.md).
 
@@ -114,7 +114,7 @@ Morning brief is still the Modes & Routines entry. See [`android/README.md`](and
 | Flow | Fetch brief → show sections → TTS `script`. **No music.** |
 | Hub URL | Settings → Pi server URL (default `http://192.168.178.23:8741`) |
 
-Build on a machine with JDK 17 and the Android SDK (`android/build-apk.bat` or Gradle).
+Build on a machine with JDK 17 and the Android SDK (`android/build-apk.bat` or Gradle). The script writes `android/dist/HealthScale.apk` and `android/dist/release.json`. Copy both to `<PA_DATA_DIR>/android/` on the Pi (`~/.local/share/personal-aissistent/android/`). Raise `versionCode` in `android/app/build.gradle.kts` for each build the phone should offer. The first install of a build that can update itself is still a sideload. Later updates use the same Pi URL as the rest of the app, including the Tailscale address. The APK has to be signed with the same keystore.
 
 ### Phone away from home
 
@@ -158,6 +158,19 @@ curl -OJ http://127.0.0.1:8741/backup/export
 ```
 
 The PC and the phone download the same zip from Settings.
+
+### Android release
+
+`android/build-apk.ps1` writes `HealthScale.apk` and `release.json`. Copy both into `<PA_DATA_DIR>/android/`. The server reads those files on each request, so the Pi process does not need a restart. A missing file, a `sha256` that does not match the APK, or a `versionCode` that is not a positive integer means no release is published. The APK name is only `HealthScale.apk`.
+
+| Method | Path |
+| --- | --- |
+| `GET` | `/app/release` — `{ available, versionCode, versionName, sha256, bytes, apkPath }`. `available` is false when nothing valid is published |
+| `GET` | `/app/apk` — the APK (`application/vnd.android.package-archive`), or 404 |
+
+```bash
+curl -s -H "Authorization: Bearer $PA_API_KEY" http://127.0.0.1:8741/app/release
+```
 
 ### News
 

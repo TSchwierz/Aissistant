@@ -16,7 +16,7 @@ from server.modules.health import mount_health, startup_health
 from server.modules.health.scale_scan import start_scale_scanner, stop_scale_scanner
 from server.modules.news import router as news_router
 from server.modules.news import start_scheduler, startup_news, stop_scheduler
-from server.routers import backup, briefing, health as liveness
+from server.routers import android_release, backup, briefing, health as liveness
 
 # LAN PC web UI (Vite) origins — not for public internet.
 _LAN_WEB_ORIGINS = [
@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(calendar_router)
     app.include_router(news_router)
     app.include_router(backup.router)
+    app.include_router(android_release.router)
     mount_health(app)
     mount_climate(app)
     return app
