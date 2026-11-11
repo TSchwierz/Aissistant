@@ -114,7 +114,7 @@ Morning brief is still the Modes & Routines entry. See [`android/README.md`](and
 | Flow | Fetch brief → show sections → TTS `script`. **No music.** |
 | Hub URL | Settings → Pi server URL (default `http://192.168.178.23:8741`) |
 
-Build on a machine with JDK 17 and the Android SDK (`android/build-apk.bat` or Gradle). The script writes `android/dist/HealthScale.apk` and `android/dist/release.json`. Copy both to `<PA_DATA_DIR>/android/` on the Pi (`~/.local/share/personal-aissistent/android/`). Raise `versionCode` in `android/app/build.gradle.kts` for each build the phone should offer. The first install of a build that can update itself is still a sideload. Later updates use the same Pi URL as the rest of the app, including the Tailscale address. The APK has to be signed with the same keystore.
+Build on a machine with JDK 17 and the Android SDK (`android/build-apk.bat` or Gradle). The script writes `android/release/HealthScale.apk` and `android/release/release.json`. Those two files are tracked. Commit them and pull on the Pi. The server reads that directory from the checkout, so the pull publishes the build. Raise `versionCode` in `android/app/build.gradle.kts` for each build the phone should offer. The first install of a build that can update itself is still a sideload. Later updates use the same Pi URL as the rest of the app, including the Tailscale address. The APK has to be signed with the same keystore.
 
 ### Phone away from home
 
@@ -161,7 +161,7 @@ The PC and the phone download the same zip from Settings.
 
 ### Android release
 
-`android/build-apk.ps1` writes `HealthScale.apk` and `release.json`. Copy both into `<PA_DATA_DIR>/android/`. The server reads those files on each request, so the Pi process does not need a restart. A missing file, a `sha256` that does not match the APK, or a `versionCode` that is not a positive integer means no release is published. The APK name is only `HealthScale.apk`.
+`android/build-apk.ps1` writes `android/release/HealthScale.apk` and `android/release/release.json`. Commit both and pull on the Pi. The server reads that checkout directory on each request, so the process does not need a restart. A missing file, a `sha256` that does not match the APK, or a `versionCode` that is not a positive integer means no release is published. The APK name is only `HealthScale.apk`. Set `PA_ANDROID_RELEASE_DIR` to read the pair from somewhere else.
 
 | Method | Path |
 | --- | --- |

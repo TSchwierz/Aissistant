@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     # Empty means the stable directory outside the git checkout.
     # Set PA_DATA_DIR to keep databases somewhere else (including ./data).
     data_dir: str = ""
+    # Empty means <repo>/android/release, so a git pull publishes the phone APK.
+    # Set PA_ANDROID_RELEASE_DIR to read HealthScale.apk and release.json elsewhere.
+    android_release_dir: str = ""
 
     # AI keys — Pi only. Chain: Mistral → Claude → ChatGPT → Gemini.
     # Env: PA_MISTRAL_API_KEY, PA_ANTHROPIC_API_KEY, PA_OPENAI_API_KEY, PA_GEMINI_API_KEY

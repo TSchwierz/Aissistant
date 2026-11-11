@@ -1,4 +1,4 @@
-"""The phone updates from an APK published under PA_DATA_DIR/android."""
+"""The phone updates from the APK published in android/release."""
 
 import hashlib
 import json
@@ -37,11 +37,13 @@ class AndroidReleaseTests(unittest.TestCase):
             "PA_API_KEY": os.environ.get("PA_API_KEY"),
             "PA_EMBED_WORKERS": os.environ.get("PA_EMBED_WORKERS"),
             "PA_TIMEZONE": os.environ.get("PA_TIMEZONE"),
+            "PA_ANDROID_RELEASE_DIR": os.environ.get("PA_ANDROID_RELEASE_DIR"),
         }
         os.environ["PA_DATA_DIR"] = self._tmp.name
         os.environ["PA_API_KEY"] = TEST_API_KEY
         os.environ["PA_EMBED_WORKERS"] = "false"
         os.environ["PA_TIMEZONE"] = "Europe/Berlin"
+        os.environ["PA_ANDROID_RELEASE_DIR"] = str(Path(self._tmp.name) / "android-release")
         get_settings.cache_clear()
         clear_release_cache()
         reset_engine_for_tests()
@@ -53,7 +55,7 @@ class AndroidReleaseTests(unittest.TestCase):
         self.client = TestClient(create_app())
         self.client.__enter__()
         self._entered = True
-        self.folder = Path(get_settings().data_dir) / "android"
+        self.folder = Path(get_settings().android_release_dir)
 
     def tearDown(self):
         clear_release_cache()

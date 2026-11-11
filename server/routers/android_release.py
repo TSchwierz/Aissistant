@@ -1,8 +1,8 @@
 """Phone APK updates.
 
-The build script writes ``android/dist/HealthScale.apk`` and ``release.json``.
-Copy both into ``<PA_DATA_DIR>/android/``. The phone compares ``versionCode``
-and downloads the APK with the same API key it already uses.
+The build script writes ``android/release/HealthScale.apk`` and ``release.json``.
+Those files are tracked, so a git pull on the Pi publishes the build. The phone
+compares ``versionCode`` and downloads the APK with the same API key it already uses.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ from server.config import get_settings
 
 router = APIRouter(prefix="/app", tags=["app"])
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 APK_NAME = "HealthScale.apk"
 RELEASE_NAME = "release.json"
 APK_MEDIA_TYPE = "application/vnd.android.package-archive"
@@ -30,7 +32,10 @@ _cache: dict[str, tuple | dict | None] = {"key": None, "value": None}
 
 
 def android_release_dir() -> Path:
-    return Path(get_settings().data_dir).expanduser().resolve() / "android"
+    raw = get_settings().android_release_dir.strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (_REPO_ROOT / "android" / "release").resolve()
 
 
 def clear_release_cache() -> None:

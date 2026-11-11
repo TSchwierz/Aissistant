@@ -39,17 +39,16 @@ adb shell am start -n com.healthscale.app/.MorningBriefActivity
 
 Windows helpers: `build-apk.bat` / `build-apk.ps1`. Or Android Studio / Gradle on a machine with the SDK. This Cloud VM may not build the APK.
 
-`build-apk.ps1` writes `dist/HealthScale.apk` and `dist/release.json`. `versionCode` in `app/build.gradle.kts` has to be higher than the copy on the phone, and the APK has to be signed with the same `keystore/healthscale.jks`.
+`build-apk.ps1` moves the signed APK to `release/HealthScale.apk` and writes `release/release.json` beside it. `versionCode` in `app/build.gradle.kts` has to be higher than the copy on the phone, and the APK has to be signed with the same `keystore/healthscale.jks`.
 
 ## Remote update
 
-Copy both files to the Pi:
+`release/HealthScale.apk` and `release/release.json` are tracked. Commit them and push, then on the Pi:
 
 ```bash
-mkdir -p ~/.local/share/personal-aissistent/android
-scp dist/HealthScale.apk dist/release.json pi:~/.local/share/personal-aissistent/android/
+git pull
 ```
 
 On the phone, Settings → **Update**. The app checks `GET /app/release`, downloads `GET /app/apk` with the saved API key, checks the SHA-256, and opens the system installer. Allow **Install unknown apps** for Health Scale the first time. Android still asks you to confirm. The same Pi URL works on the LAN and over Tailscale.
 
-The phone needs one sideload of a build that contains this updater. After that, publishing a higher `versionCode` is enough. The server does not need a restart.
+The phone needs one sideload of a build that contains this updater. After that, a pull of a higher `versionCode` is enough. The server does not need a restart.

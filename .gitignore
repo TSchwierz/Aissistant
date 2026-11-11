@@ -62,6 +62,8 @@ android/local.properties
 android/keystore/
 android/**/*.apk
 android/**/*.aab
+# The phone build is published by git pull. This pair is the exception.
+!android/release/HealthScale.apk
 android/captures/
 
 # Web

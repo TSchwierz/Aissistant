@@ -1,10 +1,11 @@
-# Builds a signed release APK at android\dist\HealthScale.apk
+# Builds a signed release APK at android\release\HealthScale.apk
+# and writes android\release\release.json beside it. Both files are tracked.
 # Downloads a JDK 17 and the Android SDK into %LOCALAPPDATA% when they are missing.
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $AndroidDir = $PSScriptRoot
-$DistDir = Join-Path $AndroidDir "dist"
+$ReleaseDir = Join-Path $AndroidDir "release"
 $KeystoreDir = Join-Path $AndroidDir "keystore"
 $SdkRoot = Join-Path $env:LOCALAPPDATA "Android\Sdk"
 $JdkRoot = Join-Path $env:LOCALAPPDATA "HealthScale\jdk-17"
@@ -216,10 +217,10 @@ $keyAlias = Read-KeystoreProp "keyAlias"
 if ($LASTEXITCODE -ne 0) { throw "apksigner could not sign the APK." }
 & $apkSigner verify --verbose $apk
 if ($LASTEXITCODE -ne 0) { throw "The APK was built but its signature does not verify." }
-New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
-$dest = Join-Path $DistDir "HealthScale.apk"
-Copy-Item $apk $dest -Force
-$releasePath = Join-Path $DistDir "release.json"
+New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
+$dest = Join-Path $ReleaseDir "HealthScale.apk"
+Move-Item $apk $dest -Force
+$releasePath = Join-Path $ReleaseDir "release.json"
 Write-ReleaseJson $dest $releasePath $buildTools.FullName
 
 Write-Host ""
@@ -231,8 +232,7 @@ Write-Host "  1. Plug in the phone and choose File transfer in the USB notificat
 Write-Host "  2. Copy HealthScale.apk into the phone's Download folder."
 Write-Host "  3. On the phone, open Files and tap the APK. Allow Install unknown apps if asked."
 Write-Host ""
-Write-Host "Later updates (phone pulls from the Pi):"
+Write-Host "Later updates:"
 Write-Host "  1. Raise versionCode in android\app\build.gradle.kts and build again."
-Write-Host "  2. Copy HealthScale.apk and release.json to the Pi data directory:"
-Write-Host "     ~/.local/share/personal-aissistent/android/"
-Write-Host "  3. On the phone, open Settings and tap Update. Confirm the install."
+Write-Host "  2. Commit android\release\HealthScale.apk and release.json, then push."
+Write-Host "  3. On the Pi, git pull. On the phone, open Settings and tap Update."
