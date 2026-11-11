@@ -111,6 +111,8 @@ data class ClimateReading(
     val tempC: Double?,
     val humidity: Double?,
     val status: String?,
+    val sensorOk: Boolean = true,
+    val sensorMessage: String? = null,
 )
 
 data class ClimatePoint(
@@ -393,10 +395,13 @@ class HubClient(
     suspend fun climateCurrent(baseUrl: String): ClimateReading = io {
         val root = jsonObject(baseUrl, "/climate/current")
         val measurement = root.optJSONObject("measurement")
+        val sensor = root.optJSONObject("sensor")
         ClimateReading(
             tempC = measurement?.optDoubleOrNull("temperature_c"),
             humidity = measurement?.optDoubleOrNull("humidity_pct"),
             status = root.optJSONObject("status")?.optString("overall")?.ifBlank { null },
+            sensorOk = if (sensor == null) measurement != null else sensor.optBoolean("ok"),
+            sensorMessage = sensor?.optString("message")?.ifBlank { null },
         )
     }
 

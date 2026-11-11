@@ -1,8 +1,9 @@
 """Studio Climate Monitor — mounted into the unified Personal AIssistent process.
 
 Routes live under ``/climate/*`` (former standalone port ``:8787``).
-Mock sensor is the default for PC smoke tests; set ``mock_sensor = false`` in
-``config.climate.toml`` (or ``PA_CLIMATE_MOCK_SENSOR=false``) on the Pi.
+Indoor readings come from a DHT11. The pin is ``collector.gpio_pin`` in
+``config.climate.toml`` (default BCM 23). A sensor that cannot be read is
+reported on ``GET /climate/current`` and is not replaced with generated numbers.
 """
 
 from __future__ import annotations

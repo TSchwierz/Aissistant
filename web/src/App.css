@@ -230,7 +230,8 @@
 .event-row,
 .digest-card,
 .list-empty,
-.error-box {
+.error-box,
+.warning-box {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elevated);
@@ -476,6 +477,11 @@ button.linkish {
 
 .error-box {
   color: var(--danger);
+}
+
+.warning-box {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
 }
 
 .muted {

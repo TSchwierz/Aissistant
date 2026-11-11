@@ -104,8 +104,6 @@ class Settings(BaseSettings):
     # Empty means the stable directory outside the git checkout.
     # Set PA_DATA_DIR to keep databases somewhere else (including ./data).
     data_dir: str = ""
-    # None = follow config.toml / climate default (mock on for PC-friendly smoke).
-    climate_mock_sensor: bool | None = None
 
     # AI keys — Pi only. Chain: Mistral → Claude → ChatGPT → Gemini.
     # Env: PA_MISTRAL_API_KEY, PA_ANTHROPIC_API_KEY, PA_OPENAI_API_KEY, PA_GEMINI_API_KEY

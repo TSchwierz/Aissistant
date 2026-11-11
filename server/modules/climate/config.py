@@ -21,7 +21,6 @@ class AppConfig:
     db_path: Path
     sample_interval_seconds: int
     gpio_pin: int
-    mock_sensor: bool
     ntfy_server: str
     ntfy_topic: str
     ntfy_token: str
@@ -92,19 +91,12 @@ def load_config(path: Path | None = None) -> AppConfig:
         _resolve_under_data(advisor_raw, data_dir) if advisor_raw else data_dir / "advisor"
     )
 
-    # PC / CI smoke: mock sensor unless config or PA_CLIMATE_MOCK_SENSOR says otherwise.
-    mock_default = True
-    mock_sensor = bool(collector.get("mock_sensor", mock_default))
-    if settings.climate_mock_sensor is not None:
-        mock_sensor = settings.climate_mock_sensor
-
     return AppConfig(
         host=str(server.get("host", settings.host)),
         port=int(server.get("port", settings.port)),
         db_path=db_path,
         sample_interval_seconds=int(collector.get("sample_interval_seconds", 60)),
         gpio_pin=int(collector.get("gpio_pin", 23)),
-        mock_sensor=mock_sensor,
         ntfy_server=str(ntfy.get("server", "https://ntfy.sh")).rstrip("/"),
         ntfy_topic=str(ntfy.get("topic", "")),
         ntfy_token=str(ntfy.get("token", "")),

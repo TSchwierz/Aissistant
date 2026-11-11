@@ -37,7 +37,9 @@ DEFAULT_INCIDENT_TAGS = (
 )
 
 OLD_ALERT_COOLDOWN_MINUTES = "120"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+# Rows written by the removed mock sampler are tagged "legacy" and never returned.
+REAL_MEASUREMENT_SOURCE = "dht11"
 
 
 def utc_now() -> datetime:
@@ -66,6 +68,15 @@ class Measurement:
     ts: datetime
     temperature_c: float
     humidity_pct: float
+
+
+@dataclass
+class SensorStatus:
+    ok: bool
+    message: str
+    gpio_pin: int | None
+    updated_at: datetime
+    last_success_at: datetime | None
 
 
 @dataclass
@@ -194,6 +205,18 @@ def _apply_schema_migrations(conn: sqlite3.Connection, defaults: dict[str, Any])
                 (str(defaults.get("alert_cooldown_minutes", 360)),),
             )
         version = 2
+    if version < 3:
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(measurements)").fetchall()
+        }
+        if "source" not in columns:
+            conn.execute(
+                "ALTER TABLE measurements ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy'"
+            )
+        version = 3
+    # The old startup path inserted one outdoor row with sources = "mock".
+    conn.execute("DELETE FROM outside_readings WHERE sources = 'mock'")
     conn.execute(
         """
         INSERT INTO schema_meta(key, value) VALUES ('schema_version', ?)
@@ -231,10 +254,20 @@ class ClimateDB:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ts TEXT NOT NULL,
                     temperature_c REAL NOT NULL,
-                    humidity_pct REAL NOT NULL
+                    humidity_pct REAL NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'dht11'
                 );
                 CREATE INDEX IF NOT EXISTS idx_measurements_ts
                     ON measurements(ts);
+
+                CREATE TABLE IF NOT EXISTS sensor_status (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    ok INTEGER NOT NULL,
+                    message TEXT NOT NULL DEFAULT '',
+                    gpio_pin INTEGER,
+                    updated_at TEXT NOT NULL,
+                    last_success_at TEXT
+                );
 
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
@@ -359,10 +392,10 @@ class ClimateDB:
         with self.connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO measurements(ts, temperature_c, humidity_pct)
-                VALUES (?, ?, ?)
+                INSERT INTO measurements(ts, temperature_c, humidity_pct, source)
+                VALUES (?, ?, ?, ?)
                 """,
-                (iso, temperature_c, humidity_pct),
+                (iso, temperature_c, humidity_pct, REAL_MEASUREMENT_SOURCE),
             )
             row_id = int(cur.lastrowid)
         return Measurement(row_id, when, temperature_c, humidity_pct)
@@ -373,9 +406,11 @@ class ClimateDB:
                 """
                 SELECT id, ts, temperature_c, humidity_pct
                 FROM measurements
+                WHERE source = ?
                 ORDER BY ts DESC, id DESC
                 LIMIT 1
-                """
+                """,
+                (REAL_MEASUREMENT_SOURCE,),
             ).fetchone()
         if row is None:
             return None
@@ -386,21 +421,71 @@ class ClimateDB:
             float(row["humidity_pct"]),
         )
 
+    def get_sensor_status(self) -> SensorStatus | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM sensor_status WHERE id = 1").fetchone()
+        if row is None:
+            return None
+        last_success = row["last_success_at"]
+        return SensorStatus(
+            ok=bool(row["ok"]),
+            message=str(row["message"] or ""),
+            gpio_pin=None if row["gpio_pin"] is None else int(row["gpio_pin"]),
+            updated_at=parse_iso(row["updated_at"]),
+            last_success_at=None if not last_success else parse_iso(last_success),
+        )
+
+    def record_sensor_success(self, gpio_pin: int) -> None:
+        now = to_iso(utc_now())
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sensor_status(
+                    id, ok, message, gpio_pin, updated_at, last_success_at
+                ) VALUES (1, 1, '', ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    ok = 1,
+                    message = '',
+                    gpio_pin = excluded.gpio_pin,
+                    updated_at = excluded.updated_at,
+                    last_success_at = excluded.last_success_at
+                """,
+                (gpio_pin, now, now),
+            )
+
+    def record_sensor_failure(self, gpio_pin: int, message: str) -> None:
+        now = to_iso(utc_now())
+        text = message.strip() or "The DHT11 read failed."
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sensor_status(
+                    id, ok, message, gpio_pin, updated_at, last_success_at
+                ) VALUES (1, 0, ?, ?, ?, NULL)
+                ON CONFLICT(id) DO UPDATE SET
+                    ok = 0,
+                    message = excluded.message,
+                    gpio_pin = excluded.gpio_pin,
+                    updated_at = excluded.updated_at
+                """,
+                (text, gpio_pin, now),
+            )
+
     def list_measurements(
         self,
         start: datetime | None = None,
         end: datetime | None = None,
         limit: int = 5000,
     ) -> list[Measurement]:
-        clauses: list[str] = []
-        params: list[Any] = []
+        clauses = ["source = ?"]
+        params: list[Any] = [REAL_MEASUREMENT_SOURCE]
         if start is not None:
             clauses.append("ts >= ?")
             params.append(to_iso(start))
         if end is not None:
             clauses.append("ts <= ?")
             params.append(to_iso(end))
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        where = f"WHERE {' AND '.join(clauses)}"
         params.append(max(1, min(limit, 100_000)))
         # Keep the newest rows when the window is larger than `limit`, then
         # return them oldest-first so charts read left to right.
@@ -429,12 +514,13 @@ class ClimateDB:
 
     def recent_measurements(self, limit: int) -> list[Measurement]:
         """Latest `limit` samples, returned oldest-first."""
-        params = (max(1, min(limit, 100_000)),)
+        params = (REAL_MEASUREMENT_SOURCE, max(1, min(limit, 100_000)))
         with self.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT id, ts, temperature_c, humidity_pct
                 FROM measurements
+                WHERE source = ?
                 ORDER BY ts DESC, id DESC
                 LIMIT ?
                 """,
@@ -455,15 +541,15 @@ class ClimateDB:
     def stats(
         self, start: datetime | None = None, end: datetime | None = None
     ) -> dict[str, Any]:
-        clauses: list[str] = []
-        params: list[Any] = []
+        clauses = ["source = ?"]
+        params: list[Any] = [REAL_MEASUREMENT_SOURCE]
         if start is not None:
             clauses.append("ts >= ?")
             params.append(to_iso(start))
         if end is not None:
             clauses.append("ts <= ?")
             params.append(to_iso(end))
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        where = f"WHERE {' AND '.join(clauses)}"
         sql = f"""
             SELECT
                 COUNT(*) AS count,

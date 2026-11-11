@@ -112,9 +112,16 @@ private fun ClimateNow(baseUrl: String) {
         if (loading) Text("Loading…")
         if (!error.isNullOrBlank()) Text(error!!, color = MaterialTheme.colorScheme.error)
         reading?.let { item ->
-            Stat("Indoor temperature", formatAmount(item.tempC, "°C"))
-            Stat("Humidity", formatAmount(item.humidity, "%"))
-            Stat("Status", item.status ?: "—")
+            if (!item.sensorOk) {
+                Text(
+                    item.sensorMessage ?: "The indoor sensor is not reporting.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            } else {
+                Stat("Indoor temperature", formatAmount(item.tempC, "°C"))
+                Stat("Humidity", formatAmount(item.humidity, "%"))
+                Stat("Status", item.status ?: "—")
+            }
         }
         Text("Ventilation", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(reason ?: "—")

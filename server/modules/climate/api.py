@@ -226,6 +226,51 @@ def _rolling_from_db(db: ClimateDB, settings: dict[str, Any]) -> dict[str, Any] 
     return snapshot
 
 
+def sensor_report(db: ClimateDB, *, gpio_pin: int, sample_interval_seconds: int) -> dict[str, Any]:
+    """Live DHT11 health. A stale or missing success is a failure, not a number."""
+    status = db.get_sensor_status()
+    pin = gpio_pin if status is None or status.gpio_pin is None else status.gpio_pin
+    interval = max(2, int(sample_interval_seconds))
+    max_age = max(interval * 3, 180)
+    now = utc_now()
+    fresh = (
+        status is not None
+        and status.last_success_at is not None
+        and (now - status.last_success_at).total_seconds() <= max_age
+    )
+    if fresh:
+        ok = True
+        message = ""
+    elif status is not None and status.message.strip():
+        ok = False
+        message = status.message.strip()
+    elif status is not None and status.last_success_at is not None:
+        ok = False
+        message = (
+            f"The DHT11 on GPIO {pin} stopped reporting. "
+            "Check the wiring, and that the climate collector is running."
+        )
+    else:
+        ok = False
+        message = (
+            f"The DHT11 on GPIO {pin} has not reported a reading. "
+            "Set collector.gpio_pin in config.climate.toml if the data wire is on another pin. "
+            "On the Raspberry Pi, install adafruit-circuitpython-dht and Adafruit-Blinka, "
+            "then restart the server."
+        )
+    return {
+        "ok": ok,
+        "message": message,
+        "gpio_pin": pin,
+        "updated_at": None if status is None else to_iso(status.updated_at),
+        "last_success_at": (
+            None
+            if status is None or status.last_success_at is None
+            else to_iso(status.last_success_at)
+        ),
+    }
+
+
 def create_app(cfg: AppConfig | None = None) -> FastAPI:
     require_api_key()
     from server.modules.climate.runtime import get_runtime, init_runtime
@@ -261,22 +306,24 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
 
     @app.get("/current")
     def current() -> dict[str, Any]:
-        measurement = db.latest_measurement()
-        settings = _typed_settings(db.get_settings())
+        sensor, measurement, settings = _climate_live()
         rolling = _rolling_from_db(db, settings)
         open_incident = db.get_open_incident()
+        bands = {
+            "humidity_min": settings.get("humidity_min"),
+            "humidity_max": settings.get("humidity_max"),
+            "temp_min": settings.get("temp_min"),
+            "temp_max": settings.get("temp_max"),
+        }
+        incident = None if open_incident is None else _incident_json(open_incident)
         if measurement is None:
             return {
                 "measurement": None,
-                "bands": {
-                    "humidity_min": settings.get("humidity_min"),
-                    "humidity_max": settings.get("humidity_max"),
-                    "temp_min": settings.get("temp_min"),
-                    "temp_max": settings.get("temp_max"),
-                },
-                "status": {"overall": "unknown"},
+                "bands": bands,
+                "status": {"overall": "offline" if not sensor["ok"] else "unknown"},
+                "sensor": sensor,
                 "rolling": rolling,
-                "open_incident": None if open_incident is None else _incident_json(open_incident),
+                "open_incident": incident,
             }
         status = band_status(
             measurement.temperature_c,
@@ -293,15 +340,11 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
                 "temperature_c": measurement.temperature_c,
                 "humidity_pct": measurement.humidity_pct,
             },
-            "bands": {
-                "humidity_min": settings.get("humidity_min"),
-                "humidity_max": settings.get("humidity_max"),
-                "temp_min": settings.get("temp_min"),
-                "temp_max": settings.get("temp_max"),
-            },
+            "bands": bands,
             "status": status,
+            "sensor": sensor,
             "rolling": rolling,
-            "open_incident": None if open_incident is None else _incident_json(open_incident),
+            "open_incident": incident,
         }
 
     @app.get("/measurements")
@@ -338,10 +381,20 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
     weather = rt.weather
     stale_after = timedelta(minutes=cfg.weather_poll_interval_minutes * 2)
 
+    def _climate_live() -> tuple[dict[str, Any], Any, dict[str, Any]]:
+        settings = _typed_settings(db.get_settings())
+        try:
+            interval = int(float(settings.get("sample_interval_seconds", cfg.sample_interval_seconds)))
+        except (TypeError, ValueError):
+            interval = cfg.sample_interval_seconds
+        sensor = sensor_report(db, gpio_pin=cfg.gpio_pin, sample_interval_seconds=interval)
+        measurement = db.latest_measurement() if sensor["ok"] else None
+        return sensor, measurement, settings
+
     def outside_payload() -> dict[str, Any]:
         now = utc_now()
+        sensor, indoor, _settings = _climate_live()
         reading = db.latest_outside_reading()
-        indoor = db.latest_measurement()
 
         indoor_dew = (
             dew_point_c(indoor.temperature_c, indoor.humidity_pct)
@@ -397,8 +450,16 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
                 ),
                 "indoor_dew_point_c": indoor_dew,
                 "outside_dew_point_c": None if reading is None else reading.dew_point_c,
-                "ventilation": ventilation_advice(
-                    indoor_dew, reading.dew_point_c if reading else None
+                "ventilation": (
+                    {
+                        "action": "unknown",
+                        "delta_c": None,
+                        "reason": "Indoor sensor is not reporting, so ventilation advice is unavailable.",
+                    }
+                    if indoor is None and not sensor["ok"]
+                    else ventilation_advice(
+                        indoor_dew, reading.dew_point_c if reading else None
+                    )
                 ),
             },
             "forecast": {
@@ -582,8 +643,7 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
 
     @app.get("/advisor/context")
     def advisor_context() -> dict[str, Any]:
-        settings = _typed_settings(db.get_settings())
-        measurement = db.latest_measurement()
+        sensor, measurement, settings = _climate_live()
         open_incident = db.get_open_incident()
         live = {
             "measurement": (
@@ -595,6 +655,7 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
                     "humidity_pct": measurement.humidity_pct,
                 }
             ),
+            "sensor": sensor,
             "rolling": _rolling_from_db(db, settings),
             "open_incident": None if open_incident is None else _incident_json(open_incident),
         }

@@ -307,6 +307,12 @@ export type MealSummary = {
   meals: Meal[]
 }
 
+export type ClimateSensor = {
+  ok: boolean
+  message: string
+  gpio_pin: number
+}
+
 export type ClimateCurrent = {
   measurement: {
     id: number
@@ -316,6 +322,7 @@ export type ClimateCurrent = {
   } | null
   bands: Record<string, number>
   status: { overall: string }
+  sensor?: ClimateSensor
   open_incident: { id: number; metric: string; direction: string } | null
 }
 

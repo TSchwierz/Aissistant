@@ -9,7 +9,7 @@ from typing import Any
 from .advisor import AdvisorStore
 from .alerts import evaluate_alerts
 from .config import AppConfig, load_config
-from .db import ClimateDB
+from .db import ClimateDB, Measurement
 from .incidents import evaluate_incidents
 from .sensor import SensorError, create_sensor
 from .weather import WeatherService
@@ -70,6 +70,24 @@ _collector_stop = threading.Event()
 _collector_thread: threading.Thread | None = None
 
 
+def read_and_store(db: ClimateDB, sensor: Any, gpio_pin: int) -> Measurement | None:
+    """Read the DHT11 once and store it. A failed read is recorded and skipped."""
+    try:
+        reading = sensor.read()
+    except SensorError as exc:
+        db.record_sensor_failure(gpio_pin, str(exc))
+        logger.warning("Sensor read failed: %s", exc)
+        return None
+    measurement = db.insert_measurement(reading.temperature_c, reading.humidity_pct)
+    db.record_sensor_success(gpio_pin)
+    logger.info(
+        "Stored T=%.1f°C RH=%.1f%%",
+        measurement.temperature_c,
+        measurement.humidity_pct,
+    )
+    return measurement
+
+
 def run_collector(
     cfg: AppConfig | None = None, stop_event: threading.Event | None = None
 ) -> None:
@@ -79,7 +97,7 @@ def run_collector(
     advisor = AdvisorStore(cfg.advisor_path)
     advisor.ensure()
 
-    sensor = create_sensor(mock=cfg.mock_sensor, gpio_pin=cfg.gpio_pin)
+    sensor = None
     stop_event = stop_event or threading.Event()
 
     def _handle_signal(signum, _frame) -> None:  # noqa: ANN001
@@ -92,10 +110,10 @@ def run_collector(
         signal.signal(signal.SIGTERM, _handle_signal)
 
     logger.info(
-        "Collector started (interval=%ss, db=%s, mock=%s)",
+        "Collector started (interval=%ss, db=%s, gpio=%s)",
         cfg.sample_interval_seconds,
         cfg.db_path,
-        cfg.mock_sensor,
+        cfg.gpio_pin,
     )
 
     weather = create_weather_service(cfg, db)
@@ -118,25 +136,26 @@ def run_collector(
 
     while not stop_event.is_set():
         loop_started = time.monotonic()
+        interval = max(2, cfg.sample_interval_seconds)
         try:
             settings = db.get_settings()
             try:
-                interval = int(float(settings.get("sample_interval_seconds", cfg.sample_interval_seconds)))
+                interval = int(float(settings.get("sample_interval_seconds", interval)))
             except (TypeError, ValueError):
-                interval = cfg.sample_interval_seconds
+                interval = max(2, cfg.sample_interval_seconds)
             interval = max(2, interval)
 
-            reading = sensor.read()
-            measurement = db.insert_measurement(reading.temperature_c, reading.humidity_pct)
-            logger.info(
-                "Stored T=%.1f°C RH=%.1f%%",
-                measurement.temperature_c,
-                measurement.humidity_pct,
-            )
-            evaluate_alerts(db, measurement, weather=weather)
-            evaluate_incidents(db, measurement, weather=weather, advisor=advisor)
-        except SensorError as exc:
-            logger.warning("Sensor read failed: %s", exc)
+            if sensor is None:
+                try:
+                    sensor = create_sensor(gpio_pin=cfg.gpio_pin)
+                except SensorError as exc:
+                    db.record_sensor_failure(cfg.gpio_pin, str(exc))
+                    logger.warning("Indoor sensor is not available: %s", exc)
+
+            measurement = read_and_store(db, sensor, cfg.gpio_pin) if sensor is not None else None
+            if measurement is not None:
+                evaluate_alerts(db, measurement, weather=weather)
+                evaluate_incidents(db, measurement, weather=weather, advisor=advisor)
         except Exception:  # noqa: BLE001
             logger.exception("Collector loop error")
 

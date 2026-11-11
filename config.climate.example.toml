@@ -9,10 +9,10 @@
 path = "climate.db"
 
 [collector]
+# Seconds between DHT11 reads. The sensor needs at least 2 seconds between samples.
 sample_interval_seconds = 60
+# BCM number of the DHT11 data pin. 23 is GPIO23 on the Raspberry Pi header.
 gpio_pin = 23
-# Default true in the unified server for PC smoke tests; set false on the Pi with DHT11.
-mock_sensor = true
 
 [ntfy]
 # Leave topic empty to disable notifications until configured.

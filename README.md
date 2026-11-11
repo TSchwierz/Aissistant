@@ -47,7 +47,6 @@ Prefix is `PA_`. A `.env` file in the repo root is read as well.
 | `PA_PORT` | `8741` | |
 | `PA_DATA_DIR` | see below | SQLite and scale status, outside the git checkout |
 | `PA_EMBED_WORKERS` | `true` | `false` under the supervisor, so workers are separate processes |
-| `PA_CLIMATE_MOCK_SENSOR` | climate config | Optional override. Mock is the PC-friendly default |
 | `PA_NEWS_SCHEDULER_ENABLED` | `true` | |
 | `PA_API_KEY` | *(none)* | Required. The process refuses to start when this is empty |
 | `PA_SCALE_SCAN_ENABLED` | `true` | `false` turns the morning listen off. Manual Start still scans |
@@ -79,7 +78,7 @@ Provider order: **Mistral → Claude → ChatGPT → Gemini** (exponential retry
 
 With no keys configured, news jobs still collect feeds and store a `skipped_summarize` digest.
 
-Optional climate overlay: copy `config.climate.example.toml` → `config.climate.toml`. The sensor defaults to **mock** for PC smoke tests. On the Pi, set `mock_sensor = false` and a real sample interval (the collector default is 60 seconds). Indoor temperature and humidity are sampled around the clock.
+Optional climate overlay: copy `config.climate.example.toml` → `config.climate.toml`. Indoor temperature and humidity come from a DHT11. Set `collector.gpio_pin` in that file (default BCM **23**) and the sample interval (default 60 seconds). On the Pi, install `adafruit-circuitpython-dht` and `Adafruit-Blinka`, then restart the server. If the sensor cannot be read, Climate shows a warning instead of a number. Samples written by the old mock generator stay in the database and are not shown.
 
 Outside air comes from Open-Meteo, Bright Sky (DWD), and OpenWeatherMap. OpenWeatherMap needs its own key in the climate config. The climate screen shows each provider and whether airing out would help.
 
@@ -95,7 +94,7 @@ A left sidebar holds Morning brief, Calendar, Climate, Health, News, and Setting
 | --- | --- |
 | Morning brief | Today's script and sections |
 | Calendar | Week, two weeks, month, and a simplified list. Tags and tag colours. Create, edit, delete. On the week and fortnight grids, drag a range to prefill the form, or drag a non-repeating event to move it. One optional reminder, in minutes or hours. Import an `.ics` file, a Google Calendar `.zip`, or an Outlook CSV. Events can repeat weekly, every two weeks, or monthly, with an optional end date |
-| Climate | Current indoor reading and ventilation advice. The 4-hour outside summary stays on the dashboard. A Forecast tab charts the next 24 stored hours. History for 12 hours, 24 hours, 7 days, or 30 days. Outside providers. Temperature and humidity bands, and the sample interval |
+| Climate | Current indoor DHT11 reading, or a warning when the sensor is not reporting. The 4-hour outside summary stays on the dashboard. A Forecast tab charts the next 24 stored hours. History for 12 hours, 24 hours, 7 days, or 30 days. Outside providers. Temperature and humidity bands, and the sample interval |
 | Health | Scale listener (start, stop, schedule), latest weight and body composition, charts, measurements, meals and calories, profile and targets |
 | News | Topics and the latest digests |
 | Settings | Pi URL, API key, scale listen window, connection test, backup download, theme |

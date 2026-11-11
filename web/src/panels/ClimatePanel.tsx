@@ -202,6 +202,10 @@ export function ClimatePanel() {
   const reading = outside?.reading
   const ventilation = outside?.comparison?.ventilation
   const reports = outside?.provider_reports ?? []
+  const sensorOffline = current?.sensor != null && current.sensor.ok === false
+  const sensorWarning = sensorOffline
+    ? current?.sensor?.message || 'The indoor sensor is not reporting.'
+    : null
 
   return (
     <section className="panel">
@@ -222,6 +226,11 @@ export function ClimatePanel() {
       {error && <div className="error-box">{error}</div>}
       {current && !loading && (
         <>
+          {sensorWarning && (
+            <div className="warning-box" role="alert">
+              {sensorWarning}
+            </div>
+          )}
           <div className="subnav" role="tablist" aria-label="Climate sections">
             <button
               type="button"
@@ -273,7 +282,7 @@ export function ClimatePanel() {
                 <div className="stat">
                   <div className="label">Band status</div>
                   <div className="value" style={{ fontSize: '1.05rem' }}>
-                    {current.status?.overall ?? '—'}
+                    {sensorOffline ? 'Sensor offline' : (current.status?.overall ?? '—')}
                   </div>
                 </div>
               </div>
@@ -425,7 +434,12 @@ export function ClimatePanel() {
                     })
                   }
                 />
-                <span className="hint">Indoor temperature and humidity are recorded around the clock.</span>
+                <span className="hint">
+                  Recorded from the DHT11
+                  {current?.sensor?.gpio_pin != null ? ` on GPIO ${current.sensor.gpio_pin}` : ''}.
+                  The pin is collector.gpio_pin in config.climate.toml. Restart the server after
+                  changing it.
+                </span>
               </label>
               {formError && <div className="error-box">{formError}</div>}
               <div className="panel-actions">

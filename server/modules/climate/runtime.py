@@ -9,7 +9,6 @@ from server.modules.climate.advisor import AdvisorStore
 from server.modules.climate.collector import create_weather_service, default_settings
 from server.modules.climate.config import AppConfig, load_config
 from server.modules.climate.db import ClimateDB
-from server.modules.climate.sensor import create_sensor
 from server.modules.climate.weather import WeatherService
 
 _runtime: "ClimateRuntime | None" = None
@@ -28,7 +27,7 @@ def get_runtime() -> ClimateRuntime | None:
 
 
 def init_runtime(cfg: AppConfig | None = None) -> ClimateRuntime:
-    """Init DB/schema, advisor store, optional weather service; seed mock sample."""
+    """Init DB/schema, advisor store, and the optional weather service."""
     global _runtime
     cfg = cfg or load_config()
     db = ClimateDB(cfg.db_path)
@@ -36,32 +35,6 @@ def init_runtime(cfg: AppConfig | None = None) -> ClimateRuntime:
     advisor = AdvisorStore(cfg.advisor_path)
     advisor.ensure()
     weather = create_weather_service(cfg, db)
-
-    if cfg.mock_sensor and db.latest_measurement() is None:
-        sensor = create_sensor(mock=True, gpio_pin=cfg.gpio_pin)
-        reading = sensor.read()
-        db.insert_measurement(reading.temperature_c, reading.humidity_pct)
-
-    # PC smoke: seed a simple outdoor cache row so morning-brief weather hook can fire
-    # without calling live providers.
-    if cfg.mock_sensor and db.latest_outside_reading() is None:
-        from server.modules.climate.db import OutsideReading, utc_now
-        from server.modules.climate.weather import dew_point_c
-
-        temp_c, hum = 12.0, 70.0
-        db.insert_outside_reading(
-            OutsideReading(
-                ts=utc_now(),
-                temperature_c=temp_c,
-                humidity_pct=hum,
-                dew_point_c=dew_point_c(temp_c, hum),
-                condition="cloudy",
-                wind_kph=15.0,
-                precipitation_mm=0.0,
-                sources=["mock"],
-                provider_count=1,
-            )
-        )
 
     _runtime = ClimateRuntime(cfg=cfg, db=db, advisor=advisor, weather=weather)
     return _runtime

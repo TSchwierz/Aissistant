@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
-import random
-import time
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -19,21 +16,9 @@ class SensorError(RuntimeError):
     pass
 
 
-class MockSensor:
-    """Deterministic-ish mock readings for PC/dev without DHT11 hardware."""
-
-    def __init__(self) -> None:
-        self._t0 = time.time()
-
-    def read(self) -> Reading:
-        elapsed = time.time() - self._t0
-        # Slow sine around a comfortable studio band with light noise.
-        temp = 21.5 + 1.8 * math.sin(elapsed / 3600) + random.uniform(-0.2, 0.2)
-        humidity = 48 + 6 * math.sin(elapsed / 2700 + 1.0) + random.uniform(-0.5, 0.5)
-        return Reading(round(temp, 1), round(humidity, 1))
-
-
 class DHT11Sensor:
+    """Read a DHT11 on a Raspberry Pi BCM pin (default GPIO 23)."""
+
     def __init__(self, gpio_pin: int = 23) -> None:
         self.gpio_pin = gpio_pin
         self._device = None
@@ -45,13 +30,19 @@ class DHT11Sensor:
             import adafruit_dht
         except ImportError as exc:
             raise SensorError(
-                "adafruit-circuitpython-dht (and blinka) are required on the Pi. "
-                "Or set mock_sensor = true in config.toml for testing."
+                "The DHT11 driver is not installed, so indoor temperature and humidity "
+                "cannot be read. On the Raspberry Pi, install adafruit-circuitpython-dht "
+                "and Adafruit-Blinka. "
+                f"The data pin is GPIO {self.gpio_pin}; change it with collector.gpio_pin "
+                "in config.climate.toml."
             ) from exc
 
         pin = getattr(board, f"D{self.gpio_pin}", None)
         if pin is None:
-            raise SensorError(f"Unknown board pin D{self.gpio_pin}")
+            raise SensorError(
+                f"GPIO {self.gpio_pin} is not available for the DHT11. "
+                "Set collector.gpio_pin in config.climate.toml to the BCM pin the data wire uses."
+            )
         # use_pulseio=False is recommended on Raspberry Pi Linux.
         self._device = adafruit_dht.DHT11(pin, use_pulseio=False)
 
@@ -61,11 +52,13 @@ class DHT11Sensor:
             temperature_c = self._device.temperature
             humidity = self._device.humidity
         except RuntimeError as exc:
-            # DHT sensors fail reads often; caller should retry / skip.
-            raise SensorError(str(exc)) from exc
+            # DHT sensors fail individual reads often; the collector skips that sample.
+            raise SensorError(f"The DHT11 read failed: {exc}") from exc
 
         if temperature_c is None or humidity is None:
-            raise SensorError("Sensor returned empty reading")
+            raise SensorError(
+                "The DHT11 returned an empty reading. Check the wiring and power to the sensor."
+            )
         return Reading(float(temperature_c), float(humidity))
 
     def close(self) -> None:
@@ -77,10 +70,8 @@ class DHT11Sensor:
             self._device = None
 
 
-def create_sensor(*, mock: bool, gpio_pin: int):
-    if mock:
-        logger.info("Using mock sensor (no DHT11 hardware)")
-        return MockSensor()
+def create_sensor(*, gpio_pin: int) -> DHT11Sensor:
+    logger.info("Using DHT11 on GPIO %s", gpio_pin)
     return DHT11Sensor(gpio_pin=gpio_pin)
 
 
