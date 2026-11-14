@@ -113,6 +113,7 @@ data class ClimateReading(
     val status: String?,
     val sensorOk: Boolean = true,
     val sensorMessage: String? = null,
+    val ageSeconds: Int? = null,
 )
 
 data class ClimatePoint(
@@ -402,6 +403,7 @@ class HubClient(
             status = root.optJSONObject("status")?.optString("overall")?.ifBlank { null },
             sensorOk = if (sensor == null) measurement != null else sensor.optBoolean("ok"),
             sensorMessage = sensor?.optString("message")?.ifBlank { null },
+            ageSeconds = sensor?.optIntOrNull("age_seconds"),
         )
     }
 

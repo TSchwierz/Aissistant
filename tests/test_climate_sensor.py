@@ -139,6 +139,7 @@ class ClimateSensorTests(unittest.TestCase):
         body = client.get("/climate/current").json()
         self.assertIsNone(body["measurement"])
         self.assertFalse(body["sensor"]["ok"])
+        self.assertIsNone(body["sensor"]["age_seconds"])
         self.assertIn("checksum", body["sensor"]["message"])
         self.assertEqual(body["sensor"]["gpio_pin"], 23)
         self.assertEqual(body["status"]["overall"], "offline")
@@ -151,24 +152,34 @@ class ClimateSensorTests(unittest.TestCase):
         body = client.get("/climate/current").json()
         self.assertTrue(body["sensor"]["ok"])
         self.assertEqual(body["sensor"]["message"], "")
+        self.assertGreaterEqual(body["sensor"]["age_seconds"], 0)
+        self.assertLess(body["sensor"]["age_seconds"], 5)
         self.assertEqual(body["measurement"]["temperature_c"], 19.5)
         self.assertEqual(body["measurement"]["humidity_pct"], 41.0)
         self.assertEqual(body["status"]["overall"], "in_band")
 
-    def test_stale_success_hides_the_number(self):
+    def test_stale_success_keeps_the_number_and_reports_age(self):
         client = self._open()
         db = get_runtime().db
         read_and_store(db, _Sensor(reading=Reading(19.5, 41.0)), 23)
         stale = to_iso(datetime.now(timezone.utc) - timedelta(hours=2))
         with db.connect() as conn:
             conn.execute(
-                "UPDATE sensor_status SET last_success_at = ?, message = '' WHERE id = 1",
-                (stale,),
+                """
+                UPDATE sensor_status
+                SET last_success_at = ?, ok = 0, message = ?
+                WHERE id = 1
+                """,
+                (stale, "The DHT11 read failed: checksum"),
             )
         body = client.get("/climate/current").json()
-        self.assertIsNone(body["measurement"])
+        self.assertEqual(body["measurement"]["temperature_c"], 19.5)
+        self.assertEqual(body["measurement"]["humidity_pct"], 41.0)
         self.assertFalse(body["sensor"]["ok"])
-        self.assertIn("stopped reporting", body["sensor"]["message"])
+        self.assertEqual(body["sensor"]["message"], "")
+        self.assertGreaterEqual(body["sensor"]["age_seconds"], 2 * 60 * 60 - 5)
+        self.assertLess(body["sensor"]["age_seconds"], 2 * 60 * 60 + 30)
+        self.assertEqual(body["status"]["overall"], "in_band")
 
     def test_legacy_mock_rows_and_mock_outside_are_hidden(self):
         path = Path(self._tmp.name) / "climate.db"

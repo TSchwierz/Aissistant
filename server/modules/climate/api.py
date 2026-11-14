@@ -227,29 +227,26 @@ def _rolling_from_db(db: ClimateDB, settings: dict[str, Any]) -> dict[str, Any] 
 
 
 def sensor_report(db: ClimateDB, *, gpio_pin: int, sample_interval_seconds: int) -> dict[str, Any]:
-    """Live DHT11 health. A stale or missing success is a failure, not a number."""
+    """DHT11 health. A past success stays available; age_seconds says how old it is."""
     status = db.get_sensor_status()
     pin = gpio_pin if status is None or status.gpio_pin is None else status.gpio_pin
     interval = max(2, int(sample_interval_seconds))
     max_age = max(interval * 3, 180)
     now = utc_now()
-    fresh = (
-        status is not None
-        and status.last_success_at is not None
-        and (now - status.last_success_at).total_seconds() <= max_age
-    )
+    age_seconds = None
+    if status is not None and status.last_success_at is not None:
+        age_seconds = max(0, int((now - status.last_success_at).total_seconds()))
+    fresh = age_seconds is not None and age_seconds <= max_age
     if fresh:
         ok = True
+        message = ""
+    elif age_seconds is not None:
+        # Intermittent DHT failures still leave a usable sample. Age replaces the error.
+        ok = False
         message = ""
     elif status is not None and status.message.strip():
         ok = False
         message = status.message.strip()
-    elif status is not None and status.last_success_at is not None:
-        ok = False
-        message = (
-            f"The DHT11 on GPIO {pin} stopped reporting. "
-            "Check the wiring, and that the climate collector is running."
-        )
     else:
         ok = False
         message = (
@@ -262,6 +259,7 @@ def sensor_report(db: ClimateDB, *, gpio_pin: int, sample_interval_seconds: int)
         "ok": ok,
         "message": message,
         "gpio_pin": pin,
+        "age_seconds": age_seconds,
         "updated_at": None if status is None else to_iso(status.updated_at),
         "last_success_at": (
             None
@@ -388,7 +386,7 @@ def create_app(cfg: AppConfig | None = None) -> FastAPI:
         except (TypeError, ValueError):
             interval = cfg.sample_interval_seconds
         sensor = sensor_report(db, gpio_pin=cfg.gpio_pin, sample_interval_seconds=interval)
-        measurement = db.latest_measurement() if sensor["ok"] else None
+        measurement = db.latest_measurement()
         return sensor, measurement, settings
 
     def outside_payload() -> dict[str, Any]:

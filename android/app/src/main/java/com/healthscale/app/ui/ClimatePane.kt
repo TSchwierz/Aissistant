@@ -41,6 +41,7 @@ import com.healthscale.app.api.ForecastClient
 import com.healthscale.app.api.HourlyForecast
 import com.healthscale.app.api.HourlyForecastPoint
 import com.healthscale.app.api.HubClient
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -112,15 +113,17 @@ private fun ClimateNow(baseUrl: String) {
         if (loading) Text("Loading…")
         if (!error.isNullOrBlank()) Text(error!!, color = MaterialTheme.colorScheme.error)
         reading?.let { item ->
-            if (!item.sensorOk) {
+            val hasReading = item.tempC != null || item.humidity != null
+            if (hasReading) {
+                Stat("Indoor temperature", formatAmount(item.tempC, "°C"))
+                Stat("Humidity", formatAmount(item.humidity, "%"))
+                Stat("Status", item.status ?: "—")
+                item.ageSeconds?.let { startAge -> MeasurementAgeLabel(startAge) }
+            } else if (!item.sensorOk) {
                 Text(
                     item.sensorMessage ?: "The indoor sensor is not reporting.",
                     color = MaterialTheme.colorScheme.error,
                 )
-            } else {
-                Stat("Indoor temperature", formatAmount(item.tempC, "°C"))
-                Stat("Humidity", formatAmount(item.humidity, "%"))
-                Stat("Status", item.status ?: "—")
             }
         }
         Text("Ventilation", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -506,6 +509,24 @@ private fun ClimateSettingsTab(baseUrl: String) {
         ) { Text(if (saving) "Saving…" else "Save") }
         OutlinedButton(onClick = { scope.launch { load() } }) { Text("Reload") }
     }
+}
+
+@Composable
+private fun MeasurementAgeLabel(startAgeSeconds: Int) {
+    var age by remember(startAgeSeconds) { mutableIntStateOf(startAgeSeconds.coerceAtLeast(0)) }
+    LaunchedEffect(startAgeSeconds) {
+        val started = System.nanoTime()
+        while (true) {
+            delay(1000)
+            val elapsed = ((System.nanoTime() - started) / 1_000_000_000L).toInt()
+            age = startAgeSeconds.coerceAtLeast(0) + elapsed.coerceAtLeast(0)
+        }
+    }
+    Text(
+        "Last successful measurement ${age}s ago",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

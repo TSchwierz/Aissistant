@@ -80,6 +80,8 @@ export function ClimatePanel() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [forecastReload, setForecastReload] = useState(0)
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -91,6 +93,7 @@ export function ClimatePanel() {
         api.climateSettings().catch(() => null),
       ])
       setCurrent(cur)
+      setFetchedAt(Date.now())
       setOutside(out)
       setSettings(cfg)
       setForecastReload((value) => value + 1)
@@ -104,6 +107,13 @@ export function ClimatePanel() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const age = current?.sensor?.age_seconds
+    if (age == null || !Number.isFinite(age)) return
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [current?.sensor?.age_seconds, current?.sensor?.last_success_at, fetchedAt])
 
   useEffect(() => {
     if (section !== 'history') return
@@ -202,10 +212,17 @@ export function ClimatePanel() {
   const reading = outside?.reading
   const ventilation = outside?.comparison?.ventilation
   const reports = outside?.provider_reports ?? []
+  const reportedAge = current?.sensor?.age_seconds
+  const hasLastMeasurement = m != null || (reportedAge != null && Number.isFinite(reportedAge))
   const sensorOffline = current?.sensor != null && current.sensor.ok === false
-  const sensorWarning = sensorOffline
-    ? current?.sensor?.message || 'The indoor sensor is not reporting.'
-    : null
+  const sensorWarning =
+    !hasLastMeasurement && sensorOffline
+      ? current?.sensor?.message || 'The indoor sensor is not reporting.'
+      : null
+  const measurementAgeSeconds =
+    reportedAge == null || !Number.isFinite(reportedAge) || fetchedAt == null
+      ? null
+      : Math.max(0, Math.floor(reportedAge)) + Math.max(0, Math.floor((nowMs - fetchedAt) / 1000))
 
   return (
     <section className="panel">
@@ -282,10 +299,13 @@ export function ClimatePanel() {
                 <div className="stat">
                   <div className="label">Band status</div>
                   <div className="value" style={{ fontSize: '1.05rem' }}>
-                    {sensorOffline ? 'Sensor offline' : (current.status?.overall ?? '—')}
+                    {current.status?.overall ?? '—'}
                   </div>
                 </div>
               </div>
+              {measurementAgeSeconds != null && (
+                <p className="sensor-age">Last successful measurement {measurementAgeSeconds}s ago</p>
+              )}
               <div className="section-card" style={{ marginTop: '0.85rem' }}>
                 <h3>Humidity</h3>
                 <p style={{ margin: 0 }}>

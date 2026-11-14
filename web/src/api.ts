@@ -311,6 +311,8 @@ export type ClimateSensor = {
   ok: boolean
   message: string
   gpio_pin: number
+  age_seconds?: number | null
+  last_success_at?: string | null
 }
 
 export type ClimateCurrent = {
